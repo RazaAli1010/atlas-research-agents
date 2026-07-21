@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str
 
     # --- optional ---
+    # Default chat model for all roles (provider-prefixed for init_chat_model).
+    # OpenAI is the sole provider (§3). F9 replaces the router's role->model logic;
+    # this default stays as the fallback.
+    DEFAULT_MODEL: str = "openai:gpt-4o-mini"
     LANGSMITH_API_KEY: str | None = None
     LANGSMITH_TRACING: bool = False
     LANGSMITH_PROJECT: str = "atlas"

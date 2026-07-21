@@ -1,0 +1,60 @@
+"""The checkpointer factory selects sqlite by config and drives a real run."""
+
+from pathlib import Path
+
+import pytest
+from langchain_core.messages import AIMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+from app.graph.builder import build_graph
+from app.graph.nodes import planner as planner_mod
+from app.graph.nodes.planner import PlannerOutput
+from app.graph.state import ResearchState, SectionPlan
+from app.persistence import checkpointer as cp_mod
+from app.persistence.checkpointer import checkpointer_cx
+
+
+class _FakeStructuredModel:
+    def invoke(self, _messages: object) -> dict:
+        raw = AIMessage(
+            content="",
+            usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            response_metadata={"model_name": "gpt-4o-mini"},
+        )
+        section = SectionPlan(id="x", title="Overview", objective="obj", suggested_queries=["q"])
+        return {"parsed": PlannerOutput(sections=[section]), "raw": raw}
+
+
+class _FakeModel:
+    def with_structured_output(self, _schema: object, include_raw: bool = False) -> object:
+        return _FakeStructuredModel()
+
+
+def _seed() -> ResearchState:
+    return {
+        "topic": "T",
+        "plan": [],
+        "plan_approved": False,
+        "drafts": [],
+        "reviews": [],
+        "revision_counts": {},
+        "final_report_md": "",
+        "usage_log": [],
+        "status": "planning",
+    }
+
+
+def test_sqlite_backend_yields_saver_and_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cp_mod.settings, "CHECKPOINT_BACKEND", "sqlite")
+    monkeypatch.setattr(cp_mod, "SQLITE_PATH", str(tmp_path / "cp.sqlite"))
+    monkeypatch.setattr(planner_mod, "get_model", lambda _role: _FakeModel())
+
+    with checkpointer_cx() as cp:
+        assert isinstance(cp, SqliteSaver)
+        graph = build_graph(cp)
+        final = graph.invoke(_seed(), config={"configurable": {"thread_id": "t1"}})
+
+    assert final["status"] == "done"
+    assert final["final_report_md"].startswith("# T")
