@@ -1,0 +1,30 @@
+@import 'tailwindcss';
+
+/* Atlas design tokens (SHARED CONTEXT §8). Dark-first, calm, dense, technical. */
+@theme {
+  --color-background: #0b0e14;
+  --color-surface: #131722;
+  --color-raised: #1a2030;
+  --color-border: #232b3d;
+
+  --color-text-primary: #e6eaf2;
+  --color-text-secondary: #8a94a8;
+
+  --color-accent: #6e9fff;
+  --color-success: #4ade80;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --radius-card: 10px;
+  --radius-control: 8px;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
