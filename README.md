@@ -61,6 +61,38 @@ npm run dev
 # → http://localhost:5173 shows the dark Atlas shell (sidebar: New Run / History)
 ```
 
+---
+
+## F2 — Graph state, planner node & walking skeleton graph
+
+The typed `ResearchState` (`app/graph/state.py`, the single source of truth for §5) plus a
+minimal compiled graph `START → planner → writer → END`. The planner decomposes a topic into
+3–6 sections via structured output; the writer (F2 stub) renders them as a Markdown outline.
+Every LLM call goes through `app/llm/router.py` (`get_model` / `track_usage`), and token cost is
+recorded into `usage_log`. Interrupts, worker fan-out, tools, and the reviewer arrive in F3–F5.
+
+### Run the skeleton
+
+```bash
+cd backend
+# .env must live in backend/ (see F1) with a real OPENAI_API_KEY
+uv run python -m app.graph.demo "Compare vector database pricing for a startup"
+# → prints a 3–6 item plan outline and `total_cost_usd:` (4 decimals, e.g. 0.0002)
+```
+
+Set `LANGSMITH_TRACING=true` (+ a valid `LANGSMITH_API_KEY`) to see the run in the LangSmith
+`atlas` project with named `planner` / `writer` nodes.
+
+### Verify
+
+```bash
+cd backend
+uv run pytest && uv run ruff check . && uv run mypy app
+```
+
+The checkpointer backend is selected by `CHECKPOINT_BACKEND` (`sqlite` dev → `atlas_checkpoints.sqlite`,
+`postgres` prod). Tests use an in-memory / temp-file saver and mock the model, so they run offline.
+
 ### Configuration
 
 All config is environment-driven (12-factor). Copy `.env.example` → `backend/.env` and
@@ -70,6 +102,7 @@ fill real values for local LLM/search/tracing. Never commit `.env`.
 | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | ✅ | — | sole LLM provider |
 | `TAVILY_API_KEY` | ✅ | — | web search |
+| `DEFAULT_MODEL` | | `openai:gpt-4o-mini` | default chat model (provider-prefixed) |
 | `LANGSMITH_API_KEY` | | — | tracing (optional) |
 | `LANGSMITH_TRACING` | | `false` | |
 | `LANGSMITH_PROJECT` | | `atlas` | |
