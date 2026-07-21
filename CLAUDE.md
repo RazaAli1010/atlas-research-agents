@@ -88,9 +88,11 @@ atlas/
 │   │   │   └── calculator.py
 │   │   ├── llm/
 │   │   │   └── router.py       # role->model routing + usage tracking
-│   │   └── persistence/
-│   │       ├── checkpointer.py # backend-selected checkpointer factory
-│   │       └── runs_repo.py    # run metadata table
+│   │   ├── persistence/
+│   │   │   ├── checkpointer.py # backend-selected checkpointer factory
+│   │   │   └── runs_repo.py    # runs metadata table (RunsRepo) — F5
+│   │   └── services/
+│   │       └── run_service.py  # RunService: run lifecycle (start/resume) — F5, used by the API
 │   ├── evals/
 │   │   ├── benchmark_topics.jsonl
 │   │   ├── run_benchmark.py

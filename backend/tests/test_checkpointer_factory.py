@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
 from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
@@ -59,10 +60,12 @@ def test_sqlite_backend_yields_saver_and_runs(
     approve = Review(section_id="x", verdict="approved", score=0.95, feedback="")
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([approve]))
 
+    config = {"configurable": {"thread_id": "t1"}}
     with checkpointer_cx() as cp:
         assert isinstance(cp, SqliteSaver)
         graph = build_graph(cp)
-        final = graph.invoke(_seed(), config={"configurable": {"thread_id": "t1"}})
+        graph.invoke(_seed(), config=config)  # pauses at approval
+        final = graph.invoke(Command(resume={"action": "approve"}), config=config)
 
     assert final["status"] == "done"
     assert final["final_report_md"].startswith("# T")

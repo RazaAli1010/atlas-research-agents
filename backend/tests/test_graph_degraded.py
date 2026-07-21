@@ -3,6 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from app.graph import builder as builder_mod
 from app.graph.builder import build_graph
@@ -58,7 +59,9 @@ def test_graph_completes_without_sources(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([approve]))
 
     graph = build_graph(MemorySaver())
-    final = graph.invoke(_seed("Vector DB pricing"), config={"configurable": {"thread_id": "t1"}})
+    config = {"configurable": {"thread_id": "t1"}}
+    graph.invoke(_seed("Vector DB pricing"), config=config)  # pauses at approval
+    final = graph.invoke(Command(resume={"action": "approve"}), config=config)
 
     assert final["status"] == "done"
     report = final["final_report_md"]

@@ -3,6 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
@@ -54,7 +55,9 @@ def test_always_revise_loop_terminates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: fake_reviewer)
 
     graph = build_graph(MemorySaver())
-    final = graph.invoke(_seed("Hard topic"), config={"configurable": {"thread_id": "loop1"}})
+    config = {"configurable": {"thread_id": "loop1"}}
+    graph.invoke(_seed("Hard topic"), config=config)  # pauses at approval
+    final = graph.invoke(Command(resume={"action": "approve"}), config=config)
 
     # Terminates at the writer despite always-revise.
     assert final["status"] == "done"

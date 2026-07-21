@@ -3,6 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
@@ -58,7 +59,9 @@ def test_graph_runs_with_memory_saver(monkeypatch: pytest.MonkeyPatch) -> None:
 
     graph = build_graph(MemorySaver())
     topic = "Compare vector database pricing for a startup"
-    final = graph.invoke(_seed(topic), config={"configurable": {"thread_id": "t1"}})
+    config = {"configurable": {"thread_id": "t1"}}
+    graph.invoke(_seed(topic), config=config)  # pauses at approval
+    final = graph.invoke(Command(resume={"action": "approve"}), config=config)
 
     assert final["status"] == "done"
     assert final["final_report_md"].startswith(f"# {topic}")

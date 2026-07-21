@@ -197,3 +197,60 @@ cd backend
 uv run pytest && uv run ruff check . && uv run mypy app
 # test_graph_review_loop.py proves an always-revise reviewer still halts within budget.
 ```
+
+## F5 — Human-in-the-loop approval gate (interrupt + Command resume)
+
+The graph pauses after planning so a human can review or edit the plan before any
+expensive research runs. The pause is a LangGraph `interrupt()`, persisted by the
+checkpointer, so a run can be **killed at the pause and resumed by a fresh process**.
+Topology becomes
+`START → planner → approval_gate(interrupt) → [fan_out] worker×N → reviewer → (workers | writer) → END`.
+
+- **Approval gate** (`app/graph/nodes/approval.py::approval_gate`) — a single
+  `interrupt({"plan": [...]})` as the node's first statement (no prior side effects, so
+  re-execution on resume is safe). Resume payloads:
+  - `{"action": "approve"}` — keep the plan.
+  - `{"action": "edit", "plan": [ {id, title, objective, suggested_queries}, ... ]}` — replace it;
+    the edited list is clamped to `MAX_SECTIONS` (6).
+
+  Either way the node sets `plan_approved=True` and advances `status` to `researching`, so the
+  fan-out dispatches one worker per (possibly edited) section.
+- **Run metadata** (`app/persistence/runs_repo.py::RunsRepo`) — a thin, hand-written store for the
+  `runs` table (`run_id`, `thread_id`, `topic`, `status`, `created_at`, `cost_usd`, `report_md`).
+  Backend-selected exactly like the checkpointer: stdlib `sqlite3` on `atlas_runs.sqlite` in dev,
+  `psycopg` over `DATABASE_URL` in prod. **Deliberate tradeoffs:** the schema is bootstrapped with a
+  `CREATE TABLE IF NOT EXISTS` on construction (no Alembic — overkill for one append-mostly table),
+  and in dev the `runs` metadata lives in its own sqlite file beside the checkpoints.
+- **Run lifecycle** (`app/services/run_service.py::RunService`) — the orchestrator the API (F6) will
+  call. `start(topic)` creates the run row and drives the graph to the approval pause; `resume(run_id,
+  decision)` feeds the decision back with `Command(resume=...)`. Each call opens a *fresh* checkpointer
+  and graph (no long-lived connection) — which is exactly what makes resume survive a restart — and the
+  synchronous graph/saver work is offloaded via `asyncio.to_thread`. The run row tracks the lifecycle
+  `planning → awaiting_approval → researching → done` with `cost_usd`.
+
+### Run it
+
+```bash
+cd backend
+# .env in backend/ with a real OPENAI_API_KEY
+uv run python -m app.graph.demo \
+  "Compare vector database pricing for a seed-stage startup" --interactive --thread demo-f5
+# → prints the proposed plan and waits: y = approve, e = edit (keep first N sections).
+#   Press Ctrl-C AT THE PAUSE to kill the process, then rerun the SAME command:
+uv run python -m app.graph.demo \
+  "Compare vector database pricing for a seed-stage startup" --interactive --thread demo-f5
+# → re-attaches to thread demo-f5, reprints the persisted plan, and 'y' resumes to a
+#   finished report + total_cost_usd — proving checkpointer durability across processes.
+```
+
+Without `--interactive` the demo auto-approves at the pause so a run completes in one shot.
+
+### Verify
+
+```bash
+cd backend
+uv run pytest && uv run ruff check . && uv run mypy app
+# test_approval_restart.py proves resume survives a fresh graph over the same sqlite file;
+# test_approval_interrupt.py proves editing the plan changes the fan-out;
+# test_run_service.py proves the runs row transitions planning → awaiting_approval → done.
+```
