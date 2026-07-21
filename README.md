@@ -102,6 +102,7 @@ fill real values for local LLM/search/tracing. Never commit `.env`.
 | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | ✅ | — | sole LLM provider |
 | `TAVILY_API_KEY` | ✅ | — | web search |
+| `RAG_SERVICE_URL` | | — | optional RAG service base URL; unset → `rag_search` tool disabled |
 | `DEFAULT_MODEL` | | `openai:gpt-4o-mini` | default chat model (provider-prefixed) |
 | `LANGSMITH_API_KEY` | | — | tracing (optional) |
 | `LANGSMITH_TRACING` | | `false` | |
@@ -109,3 +110,45 @@ fill real values for local LLM/search/tracing. Never commit `.env`.
 | `DATABASE_URL` | | `postgresql://atlas:atlas@localhost:5432/atlas` | matches compose creds |
 | `CHECKPOINT_BACKEND` | | `sqlite` | `sqlite` \| `postgres` |
 | `CORS_ORIGINS` | | `http://localhost:5173` | comma-separated |
+
+## F3 — Tools & parallel worker fan-out (Send API)
+
+Workers now research each planned section **in parallel** using real tools, and the writer
+merges their drafts into a cited report. Topology becomes
+`START → planner → [fan_out] worker×N → writer → END`.
+
+- **Tools** (`app/tools/`, each a `@tool` with an LLM-facing docstring):
+  - `web_search` — Tavily (`langchain-tavily`), ≤5 results normalized to `{url,title,content}`,
+    content truncated to 1,000 chars; degrades to `[]` on error/zero results.
+  - `rag_search` — POSTs the user's RAG service at `RAG_SERVICE_URL`; **self-disables** (not
+    registered, logs a warning) when the var is unset, so the graph runs without it.
+  - `calculator` — safe arithmetic via `ast` parsing (no `eval`); rejects `__import__`,
+    attribute/function access, and oversized exponents.
+- **Worker** (`app/graph/nodes/worker.py`) — a hand-written, bounded ReAct loop (`.bind_tools`,
+  no prebuilt agents). Caps at `MAX_TOOL_CALLS_PER_WORKER` (8) tool calls; if run cost ≥
+  `RUN_COST_CEILING_USD` it skips tools and drafts from context (flagged). Sources are numbered
+  as tools return so every `[n]` marker resolves to a `Source`. Has a revision code path
+  (feedback + previous draft) that F4 will wire to the reviewer.
+- **Routing** (`app/graph/routing.py`) — `fan_out(state)` emits one `Send("worker", …)` per section.
+- **Writer** (`app/graph/nodes/writer.py`) — `merge_drafts()` merges drafts in plan order, dedupes
+  sources globally, remaps `[n]` markers to global indices, and appends a `## Sources` list.
+
+### Run it
+
+```bash
+cd backend
+# .env in backend/ with real OPENAI_API_KEY + TAVILY_API_KEY
+uv run python -m app.graph.demo "Compare vector database pricing for a seed-stage startup"
+# → a multi-section report; each section carries [n] markers resolvable to the closing ## Sources
+```
+
+With `LANGSMITH_TRACING=true`, the LangSmith `atlas` project shows overlapping `worker` branch
+timestamps (parallel proof). The graph completes even with `RAG_SERVICE_URL` unset and with Tavily
+returning zero results — affected sections note the source gap.
+
+### Verify
+
+```bash
+cd backend
+uv run pytest && uv run ruff check . && uv run mypy app
+```

@@ -8,10 +8,12 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
+from app.graph.nodes import worker as worker_mod
 from app.graph.nodes.planner import PlannerOutput
 from app.graph.state import ResearchState, SectionPlan
 from app.persistence import checkpointer as cp_mod
 from app.persistence.checkpointer import checkpointer_cx
+from tests.fakes import FakeModel, ai
 
 
 class _FakeStructuredModel:
@@ -50,6 +52,9 @@ def test_sqlite_backend_yields_saver_and_runs(
     monkeypatch.setattr(cp_mod.settings, "CHECKPOINT_BACKEND", "sqlite")
     monkeypatch.setattr(cp_mod, "SQLITE_PATH", str(tmp_path / "cp.sqlite"))
     monkeypatch.setattr(planner_mod, "get_model", lambda _role: _FakeModel())
+    # Topology now includes the worker; keep it offline.
+    monkeypatch.setattr(worker_mod, "get_worker_tools", lambda: [])
+    monkeypatch.setattr(worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body.")]))
 
     with checkpointer_cx() as cp:
         assert isinstance(cp, SqliteSaver)

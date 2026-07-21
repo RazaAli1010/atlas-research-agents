@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "atlas"
     DATABASE_URL: str = "postgresql://atlas:atlas@localhost:5432/atlas"
     CHECKPOINT_BACKEND: Literal["sqlite", "postgres"] = "sqlite"
+    # Base URL of the user's existing RAG service. Unset → the rag_search tool
+    # self-disables (not registered) and the graph runs without it (F3).
+    RAG_SERVICE_URL: str | None = None
     # NoDecode disables pydantic-settings' source-level JSON decoding of this
     # complex field, so the validator below receives the raw string and can
     # split it on commas.
