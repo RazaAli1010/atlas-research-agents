@@ -1,0 +1,46 @@
+[project]
+name = "atlas-backend"
+version = "0.1.0"
+description = "Atlas — autonomous research & report agent (backend)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "pydantic-settings",
+    "sse-starlette",
+    "langgraph>=1.0,<2.0",
+    "langchain>=1.0,<2.0",
+    "langchain-openai",
+    "langchain-tavily",
+    "langgraph-checkpoint-sqlite",
+    "langgraph-checkpoint-postgres",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "httpx",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+disallow_untyped_defs = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

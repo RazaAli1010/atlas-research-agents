@@ -1,0 +1,22 @@
+# Atlas — dev services.
+# F1: Postgres only. Backend/frontend containers arrive in F13.
+# The backend runs on the host in dev; this compose file just provides the DB.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas
+      POSTGRES_DB: atlas
+    ports:
+      - "5432:5432"
+    volumes:
+      - atlas_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  atlas_pgdata:
