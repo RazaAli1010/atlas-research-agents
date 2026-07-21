@@ -12,9 +12,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.graph.nodes.planner import planner
+from app.graph.nodes.reviewer import reviewer
 from app.graph.nodes.worker import worker
 from app.graph.nodes.writer import writer
-from app.graph.routing import fan_out
+from app.graph.routing import fan_out, route_after_review
 from app.graph.state import ResearchState
 
 
@@ -30,12 +31,16 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStat
     # worker's input is a Send payload (section/topic/…), not the full state
     # schema, so its signature intentionally diverges from the node type.
     graph.add_node("worker", worker)  # type: ignore[arg-type]
+    graph.add_node("reviewer", reviewer)
     graph.add_node("writer", writer)
 
     graph.add_edge(START, "planner")
     # fan_out returns one Send("worker", ...) per section (parallel branches).
     graph.add_conditional_edges("planner", fan_out, ["worker"])
-    graph.add_edge("worker", "writer")  # fan-in via append reducers
+    graph.add_edge("worker", "reviewer")  # all workers of a wave fan in here
+    # route_after_review re-sends failing sections (revise cycle, ≤ budget) or
+    # advances to the writer once every section is settled.
+    graph.add_conditional_edges("reviewer", route_after_review, ["worker", "writer"])
     graph.add_edge("writer", END)
 
     return graph.compile(checkpointer=checkpointer)

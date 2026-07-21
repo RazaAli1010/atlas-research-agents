@@ -152,3 +152,48 @@ returning zero results — affected sections note the source gap.
 cd backend
 uv run pytest && uv run ruff check . && uv run mypy app
 ```
+
+## F4 — Reviewer node & self-correction loop
+
+The signature LangGraph cycle. A reviewer grades each section's latest draft; weak
+sections loop back to the workers with concrete feedback; the loop is hard-capped by
+the revision budget. Topology becomes
+`START → planner → [fan_out] worker×N → reviewer → (workers | writer) → END`.
+
+- **Reviewer** (`app/graph/nodes/reviewer.py`) — grades each section's newest *unreviewed*
+  draft via structured output (`.with_structured_output(Review, …)`) against a rubric
+  (objective coverage, every claim cited, no fabricated/dangling `[n]` citations, coherence).
+  `verdict` is normalized server-side: `score < 0.7 ⇒ "revise"`, and feedback is guaranteed
+  non-empty on a revise. Logs one `UsageEvent` per graded section and recomputes
+  `revision_counts[sid]` (= revisions produced so far = highest draft revision).
+- **Routing** (`app/graph/routing.py::route_after_review`) — the *sole* revision-budget gate
+  (the termination guarantee). Re-sends only sections whose latest verdict is `revise` **and**
+  that have produced fewer than `MAX_REVISIONS_PER_SECTION` (2) revisions, carrying
+  `{feedback, previous_draft}`; otherwise routes to the writer. Approved and budget-exhausted
+  sections are never re-sent, so each section is dispatched at most `1 + MAX_REVISIONS_PER_SECTION`
+  times — the loop provably terminates.
+- **Writer** (`app/graph/nodes/writer.py`) — now selects each section's highest-revision
+  **approved** draft (else the best-scoring draft), and prepends a *Limitations* note when a
+  section exhausts its budget without approval.
+
+### Run it
+
+```bash
+cd backend
+# .env in backend/ with real OPENAI_API_KEY + TAVILY_API_KEY
+LANGSMITH_TRACING=true uv run python -m app.graph.demo \
+  "Give exact 2026 per-GB monthly storage prices for Pinecone, Weaviate, and Qdrant with a break-even table"
+# → deliberately hard topic; `Drafts produced` exceeds the section count when a
+#   section is revised, and the revised section appears in the final report.
+```
+
+With `LANGSMITH_TRACING=true`, the LangSmith `atlas` trace shows at least one
+`worker → reviewer → worker → reviewer → writer` revise→improve cycle.
+
+### Verify
+
+```bash
+cd backend
+uv run pytest && uv run ruff check . && uv run mypy app
+# test_graph_review_loop.py proves an always-revise reviewer still halts within budget.
+```

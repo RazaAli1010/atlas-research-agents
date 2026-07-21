@@ -6,10 +6,13 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
+from app.graph.nodes import reviewer as reviewer_mod
 from app.graph.nodes import worker as worker_mod
 from app.graph.nodes.planner import PlannerOutput
-from app.graph.state import ResearchState, SectionPlan
-from tests.fakes import FakeModel, ai
+from app.graph.state import ResearchState, Review, SectionPlan
+from tests.fakes import FakeModel, FakeReviewModel, ai
+
+_APPROVE = Review(section_id="x", verdict="approved", score=0.95, feedback="")
 
 
 class _FakeStructuredModel:
@@ -50,6 +53,8 @@ def test_graph_runs_with_memory_saver(monkeypatch: pytest.MonkeyPatch) -> None:
     # Topology now includes the worker; keep it offline.
     monkeypatch.setattr(worker_mod, "get_worker_tools", lambda: [])
     monkeypatch.setattr(worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body.")]))
+    # Reviewer approves every section → one wave, straight to the writer.
+    monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([_APPROVE]))
 
     graph = build_graph(MemorySaver())
     topic = "Compare vector database pricing for a startup"

@@ -9,7 +9,20 @@ list.
 
 import re
 
-from app.graph.state import ResearchState, SectionDraft, SectionPlan, Source
+from app.graph.state import (
+    MAX_REVISIONS_PER_SECTION,
+    ResearchState,
+    Review,
+    SectionDraft,
+    SectionPlan,
+    Source,
+)
+
+_LIMITATIONS_PREFIX = (
+    "> **Limitations:** the following sections did not reach the reviewer's quality "
+    "bar within the revision budget: {titles}. Their best available drafts are "
+    "included below."
+)
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")
 
@@ -27,6 +40,68 @@ def _best_drafts(drafts: list[SectionDraft]) -> dict[str, SectionDraft]:
         if current is None or draft.revision > current.revision:
             best[draft.section_id] = draft
     return best
+
+
+def _select_drafts(
+    plan: list[SectionPlan],
+    drafts: list[SectionDraft],
+    reviews: list[Review],
+) -> tuple[list[SectionDraft], set[str]]:
+    """Pick the draft to publish per section and flag budget-exhausted sections.
+
+    Reviews accrue in draft-revision order, so ``reviews_for[sid][k]`` pairs with the
+    section's draft of ``revision == k``. Selection per section: the highest-revision
+    draft with an ``approved`` paired review; else the draft whose paired review has
+    the highest score; else (no reviews) the highest-revision draft.
+
+    A section is *budget-exhausted-unapproved* when its latest review verdict is
+    ``revise`` and it has already produced ``MAX_REVISIONS_PER_SECTION`` revisions
+    (highest draft revision) — these get the Limitations note.
+    """
+    drafts_by_section: dict[str, list[SectionDraft]] = {}
+    for draft in drafts:
+        drafts_by_section.setdefault(draft.section_id, []).append(draft)
+
+    reviews_by_section: dict[str, list[Review]] = {}
+    for review in reviews:
+        reviews_by_section.setdefault(review.section_id, []).append(review)
+
+    chosen: list[SectionDraft] = []
+    exhausted: set[str] = set()
+    for section in plan:
+        sec_drafts = sorted(
+            drafts_by_section.get(section.id, []), key=lambda d: d.revision
+        )
+        if not sec_drafts:
+            continue
+        sec_reviews = reviews_by_section.get(section.id, [])
+
+        approved_idx = [
+            k
+            for k, r in enumerate(sec_reviews)
+            if r.verdict == "approved" and k < len(sec_drafts)
+        ]
+        if approved_idx:
+            pick = sec_drafts[max(approved_idx)]  # highest-revision approved
+        elif sec_reviews:
+            best_k = max(range(len(sec_reviews)), key=lambda k: sec_reviews[k].score)
+            pick = sec_drafts[min(best_k, len(sec_drafts) - 1)]  # best-scoring
+        else:
+            pick = sec_drafts[-1]  # highest revision, ungraded
+        chosen.append(pick)
+
+        # A limitation only when we are publishing a non-approved draft: no review
+        # ever approved the section, its latest verdict is still revise, and it has
+        # spent its full revision budget.
+        if (
+            not approved_idx
+            and sec_reviews
+            and sec_reviews[-1].verdict == "revise"
+            and sec_drafts[-1].revision >= MAX_REVISIONS_PER_SECTION
+        ):
+            exhausted.add(section.id)
+
+    return chosen, exhausted
 
 
 def merge_drafts(
@@ -86,11 +161,23 @@ def merge_drafts(
 
 
 def writer(state: ResearchState) -> dict:
-    """Merge drafts into ``final_report_md`` with a deduplicated numbered source list."""
+    """Merge the selected per-section drafts into ``final_report_md``.
+
+    Prefers each section's highest-revision approved draft (else best-scoring), and
+    prepends a *Limitations* note when any section exhausted its revision budget
+    without approval. The source list is deduplicated and numbered.
+    """
     topic = state["topic"]
     plan = state.get("plan") or []
     drafts = state.get("drafts") or []
+    reviews = state.get("reviews") or []
 
-    body, _sources = merge_drafts(plan, drafts)
-    report = f"# {topic}\n\n{body}"
+    chosen, exhausted = _select_drafts(plan, drafts, reviews)
+    body, _sources = merge_drafts(plan, chosen)
+
+    report = f"# {topic}\n\n"
+    if exhausted:
+        titles = ", ".join(s.title for s in plan if s.id in exhausted)
+        report += _LIMITATIONS_PREFIX.format(titles=titles) + "\n\n"
+    report += body
     return {"final_report_md": report, "status": "done"}

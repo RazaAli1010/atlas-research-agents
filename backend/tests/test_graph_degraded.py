@@ -7,10 +7,11 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.graph import builder as builder_mod
 from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
+from app.graph.nodes import reviewer as reviewer_mod
 from app.graph.nodes import worker as worker_mod
 from app.graph.nodes.planner import PlannerOutput
-from app.graph.state import ResearchState, SectionPlan
-from tests.fakes import FakeModel, ai
+from app.graph.state import ResearchState, Review, SectionPlan
+from tests.fakes import FakeModel, FakeReviewModel, ai
 
 
 class _FakeStructured:
@@ -53,6 +54,8 @@ def test_graph_completes_without_sources(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body without sources.")])
     )
+    approve = Review(section_id="x", verdict="approved", score=0.95, feedback="")
+    monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([approve]))
 
     graph = build_graph(MemorySaver())
     final = graph.invoke(_seed("Vector DB pricing"), config={"configurable": {"thread_id": "t1"}})
