@@ -66,6 +66,11 @@ def main(argv: list[str]) -> int:
     for i, section in enumerate(final["plan"], start=1):
         print(f"  {i}. {section.title}")
 
+    print(f"\nDrafts produced: {len(final['drafts'])}")
+    print("\n" + "=" * 72)
+    print(final["final_report_md"])
+    print("=" * 72)
+
     total_cost = sum(e.cost_usd for e in final["usage_log"])
     print(f"\ntotal_cost_usd: {total_cost:.4f}")
     return 0
