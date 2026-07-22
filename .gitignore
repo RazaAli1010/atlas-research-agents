@@ -9,6 +9,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Eval harness run output (timestamped results.jsonl + summary.md) and stray logs
+backend/evals/results/
+*.log
+
 # Node / frontend
 node_modules/
 dist/

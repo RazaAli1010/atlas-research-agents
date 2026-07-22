@@ -15,6 +15,7 @@ dependencies = [
     "langchain-tavily",
     "langgraph-checkpoint-sqlite",
     "langgraph-checkpoint-postgres",
+    "langsmith",
     "httpx",
 ]
 

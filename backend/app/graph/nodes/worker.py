@@ -26,6 +26,7 @@ from app.graph.state import (
     SectionDraft,
     SectionPlan,
     Source,
+    ToolCallRecord,
     UsageEvent,
 )
 from app.llm.router import get_model, track_usage
@@ -131,6 +132,22 @@ def _collect(
     return "\n\n".join(lines)
 
 
+def _record_call(tool_name: str, section_id: str, result: Any) -> ToolCallRecord:
+    """Independent per-invocation record of the URLs a tool returned (F8 ground truth).
+
+    Kept separate from ``_collect`` (which builds the *cited* sources) so the
+    anti-fabrication grader has a record it can trust even if a draft's sources are
+    tampered with. Calculator / no-result calls contribute no URLs.
+    """
+    source_tool = cast(Any, TOOL_NAME_TO_SOURCE_TOOL.get(tool_name, "web_search"))
+    urls = (
+        [u for u in (str(r.get("url", "")) for r in result) if u]
+        if isinstance(result, list)
+        else []
+    )
+    return ToolCallRecord(section_id=section_id, tool=source_tool, urls=urls)
+
+
 def _build_messages(
     section: SectionPlan, topic: str, payload: dict[str, Any], cost_capped: bool
 ) -> list[Any]:
@@ -197,6 +214,7 @@ def worker(payload: dict[str, Any]) -> dict[str, Any]:
     messages = _build_messages(section, topic, payload, cost_capped)
     usage: list[UsageEvent] = []
     sources: list[Source] = []
+    records: list[ToolCallRecord] = []  # F8: independent per-call trace of returned URLs
     seen: dict[str, int] = {}
     calls = 0
 
@@ -205,23 +223,36 @@ def worker(payload: dict[str, Any]) -> dict[str, Any]:
         usage.append(track_usage("worker", ai))
         messages.append(ai)
 
-        tool_calls = ai.tool_calls or []
-        if cost_capped or not tool_calls or calls >= MAX_TOOL_CALLS_PER_WORKER:
+        requested_calls = ai.tool_calls or []
+        if cost_capped or not requested_calls:
             break
 
-        for tc in tool_calls:
+        # Answer EVERY tool_call in this message before stopping — the OpenAI API rejects
+        # the next turn (400) if any tool_call_id is left without a ToolMessage, and a
+        # model keeps requesting tools past our budget (it does not know the cap). The
+        # budget caps *executions*: calls past the cap are answered with a "skipped" stub.
+        # The budget check is at the BOTTOM of the loop, so a budget-exhausting message is
+        # always fully answered before we break (never left dangling for the next invoke).
+        for tc in requested_calls:
             if calls >= MAX_TOOL_CALLS_PER_WORKER:
-                break
-            calls += 1
+                messages.append(
+                    ToolMessage(content="Tool-call budget reached; skipped.", tool_call_id=tc["id"])
+                )
+                continue
             tool = tools_by_name.get(tc["name"])
             if tool is None:
                 messages.append(
                     ToolMessage(content="Unknown tool.", tool_call_id=tc["id"])
                 )
                 continue
+            calls += 1
             result = tool.invoke(tc["args"])
+            records.append(_record_call(tc["name"], section.id, result))
             tm_content = _collect(tc["name"], tc["args"], result, sources, seen)
             messages.append(ToolMessage(content=tm_content, tool_call_id=tc["id"]))
+
+        if calls >= MAX_TOOL_CALLS_PER_WORKER:
+            break
 
     content = _last_text(messages)
     if not content:
@@ -245,5 +276,5 @@ def worker(payload: dict[str, Any]) -> dict[str, Any]:
     # NOTE: intentionally does not write `status`. It is a scalar (LastValue)
     # channel per §5, so N parallel workers writing it would be an illegal
     # concurrent update. `status` is owned by single-writer nodes (planner/writer);
-    # only the reduced channels (drafts, usage_log) are written here.
-    return {"drafts": [draft], "usage_log": usage}
+    # only the reduced channels (drafts, usage_log, tool_calls) are written here.
+    return {"drafts": [draft], "usage_log": usage, "tool_calls": records}

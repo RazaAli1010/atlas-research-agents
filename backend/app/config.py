@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # OpenAI is the sole provider (§3). F9 replaces the router's role->model logic;
     # this default stays as the fallback.
     DEFAULT_MODEL: str = "openai:gpt-4o-mini"
+    # Eval harness judge models (F8). Strong judge for coverage/groundedness;
+    # cheap judge used by `run_benchmark.py --smoke`. Not used by graph nodes.
+    EVAL_JUDGE_MODEL: str = "openai:gpt-4o"
+    EVAL_SMOKE_MODEL: str = "openai:gpt-4o-mini"
     LANGSMITH_API_KEY: str | None = None
     LANGSMITH_TRACING: bool = False
     LANGSMITH_PROJECT: str = "atlas"
