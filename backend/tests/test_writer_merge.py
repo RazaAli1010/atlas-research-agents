@@ -1,11 +1,21 @@
-"""merge_drafts dedupes sources globally and remaps [n] markers to global indices."""
+"""merge_sections dedupes sources globally and remaps [n] markers; writer assembles
+the fixed report structure (executive summary + Limitations section)."""
 
-from app.graph.nodes.writer import merge_drafts, writer
+import pytest
+
+import app.graph.nodes.writer as writer_mod
+from app.graph.nodes.writer import merge_sections, writer
 from app.graph.state import MAX_REVISIONS_PER_SECTION, Review, SectionDraft, SectionPlan, Source
+from tests.fakes import FakeModel, ai
 
 
 def _src(url: str, title: str) -> Source:
     return Source(url=url, title=title, snippet="snip", tool="web_search")
+
+
+def _patch_writer_model(monkeypatch: pytest.MonkeyPatch, summary: str = "Summary.") -> None:
+    """Writer now calls an LLM for the executive summary — feed it a scripted reply."""
+    monkeypatch.setattr(writer_mod, "get_model", lambda _role: FakeModel([ai(content=summary)]))
 
 
 def test_merge_dedupes_and_remaps() -> None:
@@ -29,16 +39,17 @@ def test_merge_dedupes_and_remaps() -> None:
         ),
     ]
 
-    body, sources = merge_drafts(plan, drafts)
+    body, sources, stripped = merge_sections(plan, drafts)
 
     # Global dedup: shared.com counted once → 2 unique sources.
     assert [s.url for s in sources] == ["https://shared.com", "https://other.com"]
+    assert stripped == 0
     # s1 marker stays [1]; s2's local [1] (shared) remaps to global [1], [2] -> [2].
     assert "Costs are low [1]." in body
     assert "Scales well [1] and further [2]." in body
-    # Plan order preserved and a single Sources list.
-    assert body.index("## 1. Pricing") < body.index("## 2. Scale") < body.index("## Sources")
-    assert body.count("## Sources") == 1
+    # Plan order preserved; merge_sections emits section bodies only (no ## Sources).
+    assert body.index("## 1. Pricing") < body.index("## 2. Scale")
+    assert "## Sources" not in body
     # No dangling citation index (max marker <= number of sources).
     import re
 
@@ -53,7 +64,7 @@ def test_highest_revision_wins() -> None:
         SectionDraft(section_id="s1", content_md="new", sources=[], revision=1),
     ]
 
-    body, _ = merge_drafts(plan, drafts)
+    body, _sources, _stripped = merge_sections(plan, drafts)
 
     assert "new" in body
     assert "old" not in body
@@ -78,7 +89,8 @@ def _state(
     }
 
 
-def test_writer_prefers_approved_over_higher_revision() -> None:
+def test_writer_prefers_approved_over_higher_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_writer_model(monkeypatch)
     plan = [SectionPlan(id="s1", title="T", objective="o", suggested_queries=["q"])]
     drafts = [
         SectionDraft(section_id="s1", content_md="rev0 body", sources=[], revision=0),
@@ -96,10 +108,12 @@ def test_writer_prefers_approved_over_higher_revision() -> None:
     body = out["final_report_md"]
     assert "APPROVED body" in body  # highest-revision approved, not the later rev2
     assert "rev2 body" not in body
-    assert "**Limitations:**" not in body  # section did reach the bar
+    # Section reached the bar and nothing was stripped → empty Limitations.
+    assert "## Limitations\n\nNone." in body
 
 
-def test_writer_adds_limitations_note() -> None:
+def test_writer_adds_limitations_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_writer_model(monkeypatch)
     plan = [SectionPlan(id="s1", title="Pricing", objective="o", suggested_queries=["q"])]
     drafts = [
         SectionDraft(section_id="s1", content_md=f"rev{r} body", sources=[], revision=r)
@@ -110,7 +124,12 @@ def test_writer_adds_limitations_note() -> None:
     out = writer(_state(plan, drafts, reviews, {"s1": MAX_REVISIONS_PER_SECTION}))  # type: ignore[arg-type]
 
     body = out["final_report_md"]
-    assert "**Limitations:**" in body
+    # Limitations is now a dedicated section (before Sources), naming the section.
+    assert "## Limitations" in body
+    assert "quality bar" in body
     assert "Pricing" in body
-    # Note sits between the title and the first section heading.
-    assert body.index("# Topic") < body.index("**Limitations:**") < body.index("## 1.")
+    assert (
+        body.index("## Executive summary")
+        < body.index("## Limitations")
+        < body.index("## Sources")
+    )

@@ -23,6 +23,7 @@ from app.api.routes_runs import RunRegistry
 from app.graph.nodes import planner as planner_mod
 from app.graph.nodes import reviewer as reviewer_mod
 from app.graph.nodes import worker as worker_mod
+from app.graph.nodes import writer as writer_mod
 from app.graph.nodes.planner import PlannerOutput
 from app.graph.state import Review, SectionPlan
 from app.main import create_app
@@ -59,6 +60,9 @@ def patch_models(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker_mod, "get_worker_tools", lambda: [])
     monkeypatch.setattr(worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body.")]))
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([_APPROVE]))
+    monkeypatch.setattr(
+        writer_mod, "get_model", lambda _role: FakeModel([ai(content="Executive summary.")])
+    )
 
 
 def build_app(tmp_path: Path) -> Any:

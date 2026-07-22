@@ -20,6 +20,7 @@ from typing import Any, cast
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from app.graph.state import (
+    MAX_SNIPPET_CHARS,
     MAX_TOOL_CALLS_PER_WORKER,
     RUN_COST_CEILING_USD,
     SectionDraft,
@@ -30,7 +31,7 @@ from app.graph.state import (
 from app.llm.router import get_model, track_usage
 from app.tools import TOOL_NAME_TO_SOURCE_TOOL, get_worker_tools
 
-_SNIPPET_CHARS = 300
+_SNIPPET_CHARS = MAX_SNIPPET_CHARS
 
 _COST_NOTE = (
     "> _Note: run cost ceiling reached; drafted from context without tool research._"

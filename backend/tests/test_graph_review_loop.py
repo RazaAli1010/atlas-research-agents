@@ -9,6 +9,7 @@ from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
 from app.graph.nodes import reviewer as reviewer_mod
 from app.graph.nodes import worker as worker_mod
+from app.graph.nodes import writer as writer_mod
 from app.graph.nodes.planner import PlannerOutput
 from app.graph.state import MAX_REVISIONS_PER_SECTION, ResearchState, Review, SectionPlan
 from tests.fakes import FakeModel, FakeReviewModel, ai
@@ -53,6 +54,9 @@ def test_always_revise_loop_terminates(monkeypatch: pytest.MonkeyPatch) -> None:
     review = Review(section_id="x", verdict="revise", score=0.3, feedback="do better")
     fake_reviewer = FakeReviewModel([review])
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: fake_reviewer)
+    monkeypatch.setattr(
+        writer_mod, "get_model", lambda _role: FakeModel([ai(content="Executive summary.")])
+    )
 
     graph = build_graph(MemorySaver())
     config = {"configurable": {"thread_id": "loop1"}}
@@ -65,5 +69,7 @@ def test_always_revise_loop_terminates(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fake_reviewer.calls <= 1 + MAX_REVISIONS_PER_SECTION
     # Full budget used for the failing section.
     assert final["revision_counts"]["s1"] == MAX_REVISIONS_PER_SECTION
-    # The unapproved section triggers the Limitations note.
-    assert "**Limitations:**" in final["final_report_md"]
+    # The unapproved section is reported in the Limitations section.
+    report = final["final_report_md"]
+    assert "## Limitations" in report
+    assert "quality bar" in report
