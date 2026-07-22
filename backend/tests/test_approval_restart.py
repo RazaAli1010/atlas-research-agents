@@ -17,6 +17,7 @@ from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
 from app.graph.nodes import reviewer as reviewer_mod
 from app.graph.nodes import worker as worker_mod
+from app.graph.nodes import writer as writer_mod
 from app.graph.nodes.planner import PlannerOutput
 from app.graph.state import ResearchState, Review, SectionPlan
 from tests.fakes import FakeModel, FakeReviewModel, ai
@@ -47,6 +48,9 @@ def _patch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker_mod, "get_worker_tools", lambda: [])
     monkeypatch.setattr(worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body.")]))
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([_APPROVE]))
+    monkeypatch.setattr(
+        writer_mod, "get_model", lambda _role: FakeModel([ai(content="Executive summary.")])
+    )
 
 
 def _seed() -> ResearchState:

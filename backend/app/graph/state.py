@@ -7,7 +7,7 @@ rename a state field without updating §5 first.
 import operator
 from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing_extensions import TypedDict
 
 # --- Hard limits (SHARED CONTEXT §5) ---
@@ -15,6 +15,7 @@ MAX_SECTIONS = 6
 MAX_REVISIONS_PER_SECTION = 2
 MAX_TOOL_CALLS_PER_WORKER = 8
 RUN_COST_CEILING_USD = 1.50
+MAX_SNIPPET_CHARS = 300
 
 
 class Source(BaseModel):
@@ -22,6 +23,12 @@ class Source(BaseModel):
     title: str
     snippet: str  # <=300 chars, our own summary — never long verbatim quotes
     tool: Literal["web_search", "rag", "calculator"]
+
+    @field_validator("snippet")
+    @classmethod
+    def _clamp_snippet(cls, v: str) -> str:
+        """Structurally enforce the ≤300-char summary bound on every Source (§5)."""
+        return v[:MAX_SNIPPET_CHARS]
 
 
 class SectionPlan(BaseModel):

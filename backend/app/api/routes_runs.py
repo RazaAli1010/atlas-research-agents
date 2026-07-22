@@ -221,6 +221,35 @@ async def get_run(run_id: str, request: Request) -> RunDetail:
     return RunDetail.from_row_and_state(row, values)
 
 
+@router.get("/runs/{run_id}/report.md")
+async def download_report(run_id: str, request: Request) -> Response:
+    """Download the final report as a Markdown attachment (SHARED CONTEXT §7).
+
+    Serves the persisted ``runs.report_md``; falls back to the live graph-state
+    snapshot for a run whose row hasn't been synced yet. ``409`` while no report
+    exists (run still in progress / awaiting approval).
+    """
+    svc = _service(request)
+    row = svc._repo.get(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    report = row.report_md
+    if not report:  # not yet synced to the row — read the authoritative state
+        values = await svc.get_state_values(row.thread_id)
+        report = values.get("final_report_md") or ""
+    if not report:
+        raise HTTPException(status_code=409, detail="report not ready")
+
+    return Response(
+        content=report,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="atlas-report-{run_id}.md"'
+        },
+    )
+
+
 @router.post("/runs/{run_id}/resume", status_code=202)
 async def resume_run(run_id: str, body: ResumeRequest, request: Request) -> Response:
     """Resume an interrupted run with the human's approve/edit decision."""

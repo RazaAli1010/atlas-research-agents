@@ -11,6 +11,7 @@ from app.graph.builder import build_graph
 from app.graph.nodes import planner as planner_mod
 from app.graph.nodes import reviewer as reviewer_mod
 from app.graph.nodes import worker as worker_mod
+from app.graph.nodes import writer as writer_mod
 from app.graph.nodes.planner import PlannerOutput
 from app.graph.state import ResearchState, Review, SectionPlan
 from app.persistence import checkpointer as cp_mod
@@ -59,6 +60,9 @@ def test_sqlite_backend_yields_saver_and_runs(
     monkeypatch.setattr(worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body.")]))
     approve = Review(section_id="x", verdict="approved", score=0.95, feedback="")
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: FakeReviewModel([approve]))
+    monkeypatch.setattr(
+        writer_mod, "get_model", lambda _role: FakeModel([ai(content="Executive summary.")])
+    )
 
     config = {"configurable": {"thread_id": "t1"}}
     with checkpointer_cx() as cp:

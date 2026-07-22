@@ -67,8 +67,45 @@ curl -s localhost:8000/api/runs | jq                     # run listed, status:"d
 - **Single-worker, in-memory event registry.** The per-run event buffer and background
   task registry live in the process and are unbounded. Horizontal scaling would require
   an external broker (e.g. Redis pub/sub) and a task queue — out of scope here.
-- **Writer `token` events are dormant.** The transport is wired (`messages` mode →
-  `token`, filtered to the writer node), but the current writer is a deterministic
-  mechanical merge with no LLM call, so it emits no tokens. Real `token` events
-  materialize automatically once the writer becomes a streaming LLM (a later feature);
-  the authoritative report always ships in the `done` event.
+
+## F7 — report quality: citations, dedup & export
+
+The writer produces an analyst-grade report with a fixed structure and verifiable
+citations, and the report is downloadable as Markdown.
+
+### Structure contract
+
+Every report follows this skeleton exactly (a structure test parses the headings):
+
+```
+# {topic}
+## Executive summary        (LLM-written, ≤150 words, no citation markers)
+## 1. {section title}       (sections in plan order; global [n] markers)
+## 2. ...
+## Limitations              (always present; "None." when nothing to report)
+## Sources                  (deduplicated, numbered; [n] markers resolve here)
+```
+
+- **Global citations.** Workers number sources locally; the writer remaps every `[n]`
+  to a single deduplicated global source list (duplicate URLs collapse to one entry).
+- **Zero dangling markers.** A marker that does not resolve to a source is stripped, and
+  the removal is reported under *Limitations* (e.g. "N citation marker(s) … removed").
+- **Executive summary** is written by the writer via `get_model("writer")` — this is the
+  LLM call that now emits the SSE `token` deltas (previously dormant).
+- **Snippet hygiene.** `Source.snippet` is structurally clamped to ≤300 chars by a
+  Pydantic validator, so no long verbatim quotes are ever stored.
+
+### Export
+
+| Method & path | Behavior |
+| --- | --- |
+| `GET /api/runs/{run_id}/report.md` | `200` Markdown download (`Content-Disposition: attachment`); `404` unknown run; `409` if no report yet |
+
+Serves the persisted `runs.report_md`, falling back to the live graph-state snapshot.
+
+```bash
+curl -s -D - localhost:8000/api/runs/$RID/report.md -o report.md   # attachment headers
+```
+
+**PDF/DOCX export is deliberately out of scope** — the Markdown download is the single
+export format; rendering to other formats is left to the client.
