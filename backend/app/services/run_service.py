@@ -134,9 +134,13 @@ class RunService:
         the ``runs`` row. On failure, emits an ``error`` event and marks the row
         ``failed`` before re-raising.
 
-        The checkpointer context stays open for the whole stream; the sync
-        ``SqliteSaver`` is safe under async ``astream`` (opened ``check_same_thread=False``
-        with an internal lock), so the graph's executor threads may use it freely.
+        The sqlite/postgres savers are **synchronous** and raise ``NotImplementedError``
+        on the async checkpointer methods that ``graph.astream`` invokes, so we drive the
+        graph with the sync ``graph.stream`` inside an ``asyncio.to_thread`` worker and
+        bridge its chunks back to this loop through a queue. The F6 async endpoints still
+        never block, and it works for every backend (incl. the ``MemorySaver`` used in
+        tests). The saver is opened *inside* the worker thread, so the connection and every
+        graph executor thread share one process thread — no cross-thread sqlite access.
         """
         config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
         row = self._repo.get(run_id)
@@ -147,14 +151,46 @@ class RunService:
             if not isinstance(kickoff, Command):
                 await emit(StatusEvent(status=kickoff["status"]))
 
-            with self._cx() as cp:
-                graph = build_graph(cp)
-                async for mode, data in graph.astream(
-                    kickoff, config=config, stream_mode=["tasks", "messages"]
-                ):
-                    for event in chunk_to_events(mode, data, cost):
+            loop = asyncio.get_running_loop()
+            bridge: asyncio.Queue[Any] = asyncio.Queue()
+            _DONE = object()
+
+            def _pump() -> None:
+                """Run the sync graph in a worker thread, forwarding chunks to the loop."""
+                try:
+                    with self._cx() as cp:
+                        graph = build_graph(cp)
+                        for chunk in graph.stream(
+                            kickoff, config=config, stream_mode=["tasks", "messages"]
+                        ):
+                            loop.call_soon_threadsafe(bridge.put_nowait, ("chunk", chunk))
+                        snapshot = graph.get_state(config)
+                    loop.call_soon_threadsafe(bridge.put_nowait, ("snap", snapshot))
+                except Exception as exc:  # re-raised on the consuming side
+                    loop.call_soon_threadsafe(bridge.put_nowait, ("error", exc))
+                finally:
+                    loop.call_soon_threadsafe(bridge.put_nowait, _DONE)
+
+            pump = asyncio.create_task(asyncio.to_thread(_pump))
+            snap = None
+            pump_error: Exception | None = None
+            while True:
+                item = await bridge.get()
+                if item is _DONE:
+                    break
+                kind, data = item
+                if kind == "chunk":
+                    mode, chunk = data
+                    for event in chunk_to_events(mode, chunk, cost):
                         await emit(event)
-                snap = graph.get_state(config)
+                elif kind == "snap":
+                    snap = data
+                elif kind == "error":
+                    pump_error = data
+            await pump
+            if pump_error is not None:
+                raise pump_error
+            assert snap is not None  # set unless an error was raised above
 
             for event in terminal_events(snap):
                 await emit(event)
