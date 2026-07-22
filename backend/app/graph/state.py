@@ -66,11 +66,19 @@ class ToolCallRecord(BaseModel):
     The append-only ground truth of what tools actually returned this run: the
     anti-fabrication grader checks every cited source URL against the union of
     ``urls`` here, and trajectory stats count these grouped by ``section_id``.
+
+    ``contents`` maps each returned URL to the *full* tool-result text the worker
+    read (up to the tool's own char bound), unlike ``Source.snippet`` which is
+    clamped to 300 chars for the report. The groundedness grader judges a cited
+    claim against this full evidence, so it never penalizes a claim for support
+    that fell past the snippet truncation.
     """
 
     section_id: str
     tool: Literal["web_search", "rag", "calculator"]
     urls: list[str]  # URLs this call returned; [] for calculator / no results
+    # url -> full tool-result content read this call; {} for calculator / no results.
+    contents: dict[str, str] = {}
 
 
 class ResearchState(TypedDict):

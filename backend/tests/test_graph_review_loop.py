@@ -50,9 +50,15 @@ def test_always_revise_loop_terminates(monkeypatch: pytest.MonkeyPatch) -> None:
     # Stub worker: no tools, one-line body; each revision bumps the draft revision.
     monkeypatch.setattr(worker_mod, "get_worker_tools", lambda: [])
     monkeypatch.setattr(worker_mod, "get_model", lambda _role: FakeModel([ai(content="Body.")]))
-    # Reviewer always says revise (score < 0.7). Single section → calls == passes.
-    review = Review(section_id="x", verdict="revise", score=0.3, feedback="do better")
-    fake_reviewer = FakeReviewModel([review])
+    # Reviewer always says revise (score < 0.7) but the score keeps improving, so the
+    # no-progress early-stop never fires and the revision *budget* is what halts the
+    # loop — exactly the termination guarantee under test.
+    reviews = [
+        Review(section_id="x", verdict="revise", score=0.3, feedback="do better"),
+        Review(section_id="x", verdict="revise", score=0.45, feedback="do better"),
+        Review(section_id="x", verdict="revise", score=0.6, feedback="do better"),
+    ]
+    fake_reviewer = FakeReviewModel(reviews)
     monkeypatch.setattr(reviewer_mod, "get_model", lambda _role: fake_reviewer)
     monkeypatch.setattr(
         writer_mod, "get_model", lambda _role: FakeModel([ai(content="Executive summary.")])

@@ -31,14 +31,18 @@ _REVISE_FALLBACK = (
 
 _REVIEW_SYSTEM = (
     "You are the reviewer for an autonomous research agent. Grade the draft section "
-    "against its objective using this rubric: (a) objective coverage — does it fully "
-    "answer what the section must answer; (b) citations — is every factual claim "
-    "backed by a [n] marker; (c) sourcing — do all cited [n] markers resolve to an "
-    "entry in the provided sources list (no fabricated or dangling citations); "
-    "(d) coherence — is it well-structured and readable. Return a score in [0,1] "
-    "(1 = excellent), a verdict, and, when the draft needs work, concrete and "
-    "actionable revision feedback naming exactly what to fix. Score below 0.7 means "
-    "the section must be revised."
+    "against its objective using this rubric: (a) objective coverage — does it "
+    "substantively answer what the section must answer; (b) citations — is every "
+    "factual claim backed by a [n] marker that resolves to an entry in the provided "
+    "sources list (no fabricated or dangling citations); (c) grounding — does each "
+    "cited claim actually follow from that source's excerpt (flag claims the excerpt "
+    "does not support or contradicts); (d) coherence — is it well-structured and "
+    "readable. Approve any draft that meets this bar; reserve 'revise' for SUBSTANTIVE "
+    "gaps — missing objective coverage, unresolved or unsupported citations, or "
+    "incoherence — never for stylistic polish on an otherwise adequate draft. Return a "
+    "score in [0,1] (1 = excellent), a verdict, and — ONLY when revising — concrete, "
+    "actionable feedback naming exactly which claim or gap to fix and how. Score below "
+    "0.7 means the section must be revised."
 )
 
 
@@ -56,13 +60,16 @@ def _latest(drafts: list[SectionDraft]) -> SectionDraft:
 
 
 def _render_sources(sources: list[Source]) -> str:
-    """Number the draft's sources so the reviewer can check [n] markers resolve."""
+    """Number the draft's sources with their excerpt so the reviewer can check both
+    that [n] markers resolve AND that each cited claim is grounded in its source."""
     if not sources:
         return "(none)"
-    return "\n".join(
-        f"[{i}] {s.title or s.url or s.snippet} ({s.tool}) {s.url}".rstrip()
-        for i, s in enumerate(sources, start=1)
-    )
+    lines: list[str] = []
+    for i, s in enumerate(sources, start=1):
+        lines.append(f"[{i}] {s.title or s.url or 'source'} ({s.tool}) {s.url}".rstrip())
+        if s.snippet:
+            lines.append(f"    excerpt: {s.snippet}")
+    return "\n".join(lines)
 
 
 def _brief(objective: str, draft: SectionDraft) -> str:

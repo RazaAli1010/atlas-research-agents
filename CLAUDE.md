@@ -166,6 +166,9 @@ class ToolCallRecord(BaseModel):          # one per worker tool invocation (F8)
     section_id: str
     tool: Literal["web_search", "rag", "calculator"]
     urls: list[str]       # URLs this call returned; [] for calculator / no results
+    contents: dict[str, str]  # url -> full tool-result content the worker read;
+                              # groundedness ground truth (grader judges claims against
+                              # this, not the 300-char Source.snippet); {} for calculator
 
 class ResearchState(TypedDict):
     topic: str

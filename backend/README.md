@@ -138,7 +138,7 @@ by first-failing grader, and a **per-category** breakdown). Concurrency is cappe
 | `structure` | programmatic | report obeys the F7 heading contract |
 | `citation` | programmatic | no dangling markers; ≥1 source per section; **no fabricated source URLs** (every cited web/rag URL appeared in an actual tool result — see below) |
 | `coverage` | LLM judge | fraction of `must_cover` points addressed |
-| `groundedness` | LLM judge | 5 sampled cited claims are supported by their source snippet |
+| `groundedness` | LLM judge | 5 sampled cited claims are supported by the full text of their cited source(s) (from `tool_calls[*].contents`, judged against every marker on the sentence — not the 300-char snippet) |
 
 **Success (fixed):** `structure` AND `citation` pass, `coverage ≥ 0.8`, `groundedness ≥ 0.8`.
 
@@ -147,7 +147,11 @@ by first-failing grader, and a **per-category** breakdown). Concurrency is cappe
 The worker records a `ToolCallRecord` per tool invocation into `state["tool_calls"]`
 (the append-reducer field added to §5). The `citation` grader compares every cited
 source URL against this independent record — so a source URL that never came from a tool
-result is flagged as fabricated (`tests/test_citation_grader_antifab.py`).
+result is flagged as fabricated (`tests/test_citation_grader_antifab.py`). Each record
+also carries `contents` (url → full result text the worker read); the `groundedness`
+grader judges each sampled claim against this full evidence rather than the 300-char
+`Source.snippet`, so a claim is never marked ungrounded merely because its support fell
+past the snippet truncation (`tests/test_groundedness_grader.py`).
 
 ### Determinism
 
