@@ -254,3 +254,33 @@ uv run pytest && uv run ruff check . && uv run mypy app
 # test_approval_interrupt.py proves editing the plan changes the fan-out;
 # test_run_service.py proves the runs row transitions planning → awaiting_approval → done.
 ```
+
+## F9 — Model routing & cost optimization
+
+Each graph role is routed to a cost-appropriate OpenAI model behind the unchanged
+`get_model(role)` seam (`app/llm/router.py`). The default `MODEL_ROUTING` sends
+planner/reviewer/writer to the strong tier (`openai:gpt-4o`) and the high-volume fan-out
+worker to the cheap tier (`openai:gpt-4o-mini`). `GET /api/runs/{id}` now returns a
+`cost_breakdown: {node: cost_usd}` derived from `usage_log`.
+
+Override routing via the `MODEL_ROUTING` env var (JSON; roles omitted fall back to
+`DEFAULT_MODEL`; unknown role keys are rejected at startup):
+
+```bash
+# force everything onto the strong model
+MODEL_ROUTING='{"planner":"openai:gpt-4o","reviewer":"openai:gpt-4o","writer":"openai:gpt-4o","worker":"openai:gpt-4o"}' \
+  uv run python -m app.graph.demo "Compare vector database pricing for a seed-stage startup"
+```
+
+The cost comparison across all-gpt-4o / routed / all-gpt-4o-mini (n=20, seed 42) and the
+chosen default live in `backend/evals/EXPERIMENTS.md`.
+
+### Verify
+
+```bash
+cd backend
+uv run pytest tests/test_router_routing.py tests/test_config_routing.py tests/test_cost_breakdown.py -q
+git diff --stat -- app/graph/nodes/   # empty: routing changed no node code
+# Full comparison (real OpenAI + Tavily calls, needs live keys) — see evals/EXPERIMENTS.md:
+uv run python evals/run_benchmark.py --n 20 --seed 42
+```

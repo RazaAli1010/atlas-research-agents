@@ -41,7 +41,7 @@ These apply to EVERY feature. If a feature spec ever appears to conflict with th
 | ------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | Language (backend)  | Python 3.12                                                                     | managed with `uv`                                                 |
 | Agent framework     | `langgraph>=1.0,<2.0`                                                           | StateGraph, Send, interrupt, Command                              |
-| LLM integration     | `langchain>=1.0,<2.0`, `langchain-openai`                                       | `init_chat_model`; **OpenAI is the sole provider** (`OPENAI_API_KEY`), no Anthropic |
+| LLM integration     | `langchain>=1.0,<2.0`, `langchain-openai`                                       | `init_chat_model`; **OpenAI is the sole provider** (`OPENAI_API_KEY`), no Anthropic. Role→model via `MODEL_ROUTING` env (F9) |
 | Checkpointing       | `langgraph-checkpoint-sqlite` (dev), `langgraph-checkpoint-postgres` (prod)     | selected via `CHECKPOINT_BACKEND` env                             |
 | API                 | FastAPI + Uvicorn                                                               | SSE via `sse-starlette`                                           |
 | Validation/config   | Pydantic v2, `pydantic-settings`                                                |                                                                   |
@@ -205,12 +205,16 @@ START → planner → approval_gate(interrupt) → [Send fan-out] worker×N → 
 ```
 POST   /api/runs                 {topic}            → 201 {run_id, thread_id}
 GET    /api/runs                                    → 200 [{run_id, topic, status, created_at, cost_usd}]
-GET    /api/runs/{run_id}                           → 200 RunDetail (full state snapshot)
+GET    /api/runs/{run_id}                           → 200 RunDetail (full state snapshot + cost_breakdown)
 POST   /api/runs/{run_id}/resume {action, plan?}    → 202 (resumes an interrupted run)
 GET    /api/runs/{run_id}/events                    → SSE stream (see below)
 GET    /api/runs/{run_id}/report.md                 → 200 markdown download (implemented in F7)
 GET    /api/health                                  → 200 {status:"ok"}
 ```
+
+`RunDetail` additionally carries `cost_breakdown: {node: cost_usd}` (F9) — the `usage_log`
+summed per node, a derived field (never stored in `ResearchState` §5). Frontend `types.ts`
+mirrors it in F11.
 
 **SSE event envelope** (every event is one JSON object, `event:` field set to `type`):
 

@@ -1,16 +1,16 @@
-"""Role->model routing + usage tracking. Stubbed in F2, fully built in F9.
+"""Role->model routing + usage tracking. Stubbed in F2, real routing in F9.
 
 Every LLM call must go through this router; nodes never instantiate model clients
 directly (SHARED CONTEXT §2.5).
 
-F2 stub behaviour:
-- ``get_model`` returns one configured chat model for every role (the model named
-  by ``settings.DEFAULT_MODEL``).
+F9 behaviour (public signatures unchanged from the F2 stub — that was the point):
+- ``get_model(role)`` resolves the role to a provider-prefixed model id via
+  ``settings.MODEL_ROUTING`` (falling back to ``settings.DEFAULT_MODEL`` for roles
+  not present in the map) and caches one built client per role.
 - ``track_usage`` reads token usage off a LangChain ``AIMessage`` and prices it
-  from ``MODEL_PRICES``.
+  from ``MODEL_PRICES`` — unchanged.
 
-The public signatures here are final — F9 replaces only the internals (real
-role->model routing, richer pricing / rate-limit handling).
+OpenAI is the sole provider (§3), so every routed model uses ``OPENAI_API_KEY``.
 """
 
 from typing import Literal
@@ -26,29 +26,38 @@ Role = Literal["planner", "worker", "reviewer", "writer"]
 
 # Per-1M-token prices in USD, keyed by bare (undated) model id: (input, output).
 # OpenAI returns dated model names (e.g. "gpt-4o-mini-2024-07-18"); ``_price_for``
-# matches those against these prefixes. F9 may relocate this table.
+# matches those against these prefixes. Every model reachable via the default
+# MODEL_ROUTING must appear here (a zero-priced model would silently defeat the
+# RUN_COST_CEILING_USD guard in the worker).
 MODEL_PRICES: dict[str, tuple[float, float]] = {
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),  # cheap tier — default worker model
+    "gpt-4o": (2.50, 10.00),      # strong tier — default planner/reviewer/writer model
 }
 
-# Lazily-built, cached model instance (one for all roles in F2).
-_model: BaseChatModel | None = None
+# Lazily-built chat clients, cached per role (F9 routes each role independently).
+_models: dict[str, BaseChatModel] = {}
 
 
 def get_model(role: Role) -> BaseChatModel:
-    """Return the chat model for ``role``.
+    """Return the chat model for ``role``, building and caching it on first use.
 
-    F2 ignores ``role`` and returns a single cached model configured from
-    ``settings.DEFAULT_MODEL``. F9 introduces real per-role routing behind this
-    same signature.
+    The model id comes from ``settings.MODEL_ROUTING[role]``, falling back to
+    ``settings.DEFAULT_MODEL`` for a role not present in the map. Signature is
+    unchanged from the F2 stub; only the routing internals are real now.
     """
-    global _model
-    if _model is None:
+    if role not in ("planner", "worker", "reviewer", "writer"):
+        raise ValueError(f"unknown role: {role!r}")
+    if role not in _models:
+        model_id = settings.MODEL_ROUTING.get(role, settings.DEFAULT_MODEL)
         # Pass the key explicitly: pydantic-settings loads it into ``settings`` but
         # does not set the OS env var the OpenAI SDK looks for.
-        _model = init_chat_model(settings.DEFAULT_MODEL, api_key=settings.OPENAI_API_KEY)
-    return _model
+        _models[role] = init_chat_model(model_id, api_key=settings.OPENAI_API_KEY)
+    return _models[role]
+
+
+def _reset_models() -> None:
+    """Clear the per-role model cache (test hook — cache must not leak between cases)."""
+    _models.clear()
 
 
 def _price_for(model_name: str) -> tuple[float, float]:
