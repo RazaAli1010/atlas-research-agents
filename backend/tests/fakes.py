@@ -6,7 +6,7 @@ counting fake tool for exercising the tool-call budget.
 
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from app.graph.state import Review
 
@@ -42,6 +42,33 @@ class FakeModel:
         response = self._responses[min(self._i, len(self._responses) - 1)]
         self._i += 1
         return response
+
+
+def assert_tool_calls_answered(messages: list[Any]) -> None:
+    """Raise if any AIMessage's tool_calls are not all answered by following ToolMessages.
+
+    Mirrors the OpenAI contract the worker must honor — the real API returns a 400 when a
+    tool_call_id has no responding tool message.
+    """
+    for i, msg in enumerate(messages):
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            wanted = {tc["id"] for tc in msg.tool_calls}
+            answered: set[str] = set()
+            j = i + 1
+            while j < len(messages) and isinstance(messages[j], ToolMessage):
+                answered.add(messages[j].tool_call_id)
+                j += 1
+            missing = wanted - answered
+            if missing:
+                raise ValueError(f"unanswered tool_call_ids: {missing}")
+
+
+class ValidatingToolModel(FakeModel):
+    """A FakeModel that enforces the OpenAI tool_call/response pairing on every invoke."""
+
+    def invoke(self, messages: Any) -> AIMessage:
+        assert_tool_calls_answered(list(messages))
+        return super().invoke(messages)
 
 
 class FakeReviewModel:
@@ -80,3 +107,28 @@ class CountingTool:
     def invoke(self, _args: dict[str, Any]) -> list[dict[str, str]]:
         self.count += 1
         return [{"url": "https://example.com/a", "title": "A", "content": "content"}]
+
+
+class FakeJudge:
+    """Scripted structured-output judge for the F8 LLM graders.
+
+    Graders call ``get_judge_model(...).with_structured_output(Schema).invoke(msgs)`` and
+    expect the parsed pydantic instance back (``include_raw=False``). This returns
+    scripted instances in order (the last repeats) and records the human-message text of
+    each call in ``seen`` so tests can assert *which* claims were sampled.
+    """
+
+    def __init__(self, outputs: list[Any]) -> None:
+        self._outputs = list(outputs)
+        self._i = 0
+        self.seen: list[str] = []
+
+    def with_structured_output(self, _schema: Any, **_kwargs: Any) -> "FakeJudge":
+        return self
+
+    def invoke(self, messages: Any) -> Any:
+        human = messages[-1]
+        self.seen.append(human[1] if isinstance(human, tuple) else getattr(human, "content", ""))
+        out = self._outputs[min(self._i, len(self._outputs) - 1)]
+        self._i += 1
+        return out

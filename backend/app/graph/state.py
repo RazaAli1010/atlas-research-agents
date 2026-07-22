@@ -60,6 +60,19 @@ class UsageEvent(BaseModel):
     cost_usd: float
 
 
+class ToolCallRecord(BaseModel):
+    """One worker tool invocation (F8).
+
+    The append-only ground truth of what tools actually returned this run: the
+    anti-fabrication grader checks every cited source URL against the union of
+    ``urls`` here, and trajectory stats count these grouped by ``section_id``.
+    """
+
+    section_id: str
+    tool: Literal["web_search", "rag", "calculator"]
+    urls: list[str]  # URLs this call returned; [] for calculator / no results
+
+
 class ResearchState(TypedDict):
     topic: str
     plan: list[SectionPlan]
@@ -69,6 +82,8 @@ class ResearchState(TypedDict):
     revision_counts: dict[str, int]  # section_id -> revisions used
     final_report_md: str
     usage_log: Annotated[list[UsageEvent], operator.add]
+    # anti-fabrication ground truth + trajectory stats; append reducer like drafts (F8)
+    tool_calls: Annotated[list[ToolCallRecord], operator.add]
     status: Literal[
         "planning",
         "awaiting_approval",

@@ -109,3 +109,56 @@ curl -s -D - localhost:8000/api/runs/$RID/report.md -o report.md   # attachment 
 
 **PDF/DOCX export is deliberately out of scope** — the Markdown download is the single
 export format; rendering to other formats is left to the client.
+
+## F8 — evaluation harness
+
+Measures Atlas like production software: task success rate, per-grader scores,
+trajectory stats, cost, and latency over a fixed 40-topic benchmark
+(`evals/benchmark_topics.jsonl`, 10 each across `tech_comparison`, `market_overview`,
+`how_it_works`, `pricing_quant`).
+
+### Run
+
+```bash
+# needs OPENAI_API_KEY + TAVILY_API_KEY in backend/.env
+uv run python evals/run_benchmark.py --n 10           # 10 topics
+uv run python evals/run_benchmark.py --smoke          # 3 topics, cheap judge (fast/cheap)
+uv run python evals/run_benchmark.py --category pricing_quant --n 5
+```
+
+Each run auto-approves its plan (programmatic `Command(resume={"action":"approve"})`),
+runs graders, and writes `evals/results/{timestamp}/results.jsonl` + `summary.md`
+(aggregate success rate, p50/p95 latency, mean cost, a **failure-taxonomy table** grouped
+by first-failing grader, and a **per-category** breakdown). Concurrency is capped at 3.
+
+### Graders & the fixed success rule (`evals/graders.py`)
+
+| Grader | Kind | Checks |
+| --- | --- | --- |
+| `structure` | programmatic | report obeys the F7 heading contract |
+| `citation` | programmatic | no dangling markers; ≥1 source per section; **no fabricated source URLs** (every cited web/rag URL appeared in an actual tool result — see below) |
+| `coverage` | LLM judge | fraction of `must_cover` points addressed |
+| `groundedness` | LLM judge | 5 sampled cited claims are supported by their source snippet |
+
+**Success (fixed):** `structure` AND `citation` pass, `coverage ≥ 0.8`, `groundedness ≥ 0.8`.
+
+### Anti-fabrication ground truth
+
+The worker records a `ToolCallRecord` per tool invocation into `state["tool_calls"]`
+(the append-reducer field added to §5). The `citation` grader compares every cited
+source URL against this independent record — so a source URL that never came from a tool
+result is flagged as fabricated (`tests/test_citation_grader_antifab.py`).
+
+### Determinism
+
+Topic selection and grader sampling are fully reproducible given `--seed` (default 42):
+same flags → same topics, same sampled claims. The underlying LLM/tool outputs are **not**
+deterministic, so grader *scores* may vary run to run — only the *inputs and sampling* are
+reproducible.
+
+### CI
+
+The full test suite (including all offline graders) runs on every PR. The **smoke**
+benchmark is a manually-triggered workflow (`.github/workflows/evals-smoke.yml`,
+`workflow_dispatch`) — kept off per-PR CI because it makes real, billable model/tool calls.
+Trigger it from the Actions tab; it runs `--smoke` and uploads the results directory.

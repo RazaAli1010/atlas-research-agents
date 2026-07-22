@@ -1,0 +1,33 @@
+name: Evals smoke
+
+# Manually triggered only — runs real LLM/tool calls, so it is kept off the per-PR
+# CI job (cost). Trigger from the Actions tab; needs OPENAI_API_KEY / TAVILY_API_KEY
+# repository secrets.
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync
+      - name: Run benchmark smoke (3 topics, cheap judge)
+        run: uv run python evals/run_benchmark.py --smoke
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals-results
+          path: backend/evals/results/**

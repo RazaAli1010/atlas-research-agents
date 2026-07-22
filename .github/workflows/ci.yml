@@ -27,7 +27,7 @@ jobs:
       - name: Ruff (lint)
         run: uv run ruff check .
       - name: Mypy (typecheck)
-        run: uv run mypy app
+        run: uv run mypy app evals
       - name: Pytest
         run: uv run pytest
 

@@ -50,6 +50,7 @@ def _seed_state(topic: str) -> ResearchState:
         "revision_counts": {},
         "final_report_md": "",
         "usage_log": [],
+        "tool_calls": [],
         "status": "planning",
     }
 

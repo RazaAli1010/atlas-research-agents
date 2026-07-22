@@ -162,6 +162,11 @@ class UsageEvent(BaseModel):
     output_tokens: int
     cost_usd: float
 
+class ToolCallRecord(BaseModel):          # one per worker tool invocation (F8)
+    section_id: str
+    tool: Literal["web_search", "rag", "calculator"]
+    urls: list[str]       # URLs this call returned; [] for calculator / no results
+
 class ResearchState(TypedDict):
     topic: str
     plan: list[SectionPlan]
@@ -171,6 +176,7 @@ class ResearchState(TypedDict):
     revision_counts: dict[str, int]                       # section_id -> revisions used
     final_report_md: str
     usage_log: Annotated[list[UsageEvent], operator.add]
+    tool_calls: Annotated[list[ToolCallRecord], operator.add]  # anti-fabrication ground truth + trajectory (F8)
     status: Literal["planning", "awaiting_approval", "researching",
                     "reviewing", "writing", "done", "failed"]
 ```
