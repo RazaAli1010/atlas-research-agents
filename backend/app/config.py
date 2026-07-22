@@ -23,9 +23,20 @@ class Settings(BaseSettings):
 
     # --- optional ---
     # Default chat model for all roles (provider-prefixed for init_chat_model).
-    # OpenAI is the sole provider (§3). F9 replaces the router's role->model logic;
-    # this default stays as the fallback.
+    # OpenAI is the sole provider (§3). Used by the router as the per-role fallback
+    # when a role is absent from MODEL_ROUTING.
     DEFAULT_MODEL: str = "openai:gpt-4o-mini"
+    # Role -> model routing (F9). Maps each graph role to a provider-prefixed model
+    # id for init_chat_model. Strong tier (gpt-4o) for planner/reviewer/writer, cheap
+    # tier (gpt-4o-mini) for the fan-out worker. Override via env with a JSON object,
+    # e.g. MODEL_ROUTING='{"worker":"openai:gpt-4o"}' (pydantic-settings JSON-decodes
+    # a dict field automatically). Roles omitted here fall back to DEFAULT_MODEL.
+    MODEL_ROUTING: dict[str, str] = {
+        "planner": "openai:gpt-4o",
+        "reviewer": "openai:gpt-4o",
+        "writer": "openai:gpt-4o",
+        "worker": "openai:gpt-4o-mini",
+    }
     # Eval harness judge models (F8). Strong judge for coverage/groundedness;
     # cheap judge used by `run_benchmark.py --smoke`. Not used by graph nodes.
     EVAL_JUDGE_MODEL: str = "openai:gpt-4o"
@@ -42,6 +53,20 @@ class Settings(BaseSettings):
     # complex field, so the validator below receives the raw string and can
     # split it on commas.
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
+
+    @field_validator("MODEL_ROUTING")
+    @classmethod
+    def _known_roles_only(cls, v: dict[str, str]) -> dict[str, str]:
+        """Reject unknown role keys so a typo in MODEL_ROUTING fails fast at startup.
+
+        Partial maps are allowed — any of the four roles may be omitted and will fall
+        back to DEFAULT_MODEL in the router — but a key outside the role set is an error.
+        """
+        valid = {"planner", "worker", "reviewer", "writer"}
+        bad = set(v) - valid
+        if bad:
+            raise ValueError(f"unknown role(s) in MODEL_ROUTING: {sorted(bad)}")
+        return v
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

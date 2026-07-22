@@ -141,9 +141,13 @@ class RunDetail(BaseModel):
     revision_counts: dict[str, int]
     final_report_md: str
     usage_log: list[UsageEvent]
+    cost_breakdown: dict[str, float]  # node -> summed cost_usd (derived from usage_log)
 
     @classmethod
     def from_row_and_state(cls, row: RunRow, values: dict[str, Any]) -> RunDetail:
+        breakdown: dict[str, float] = {}
+        for ev in values.get("usage_log") or []:
+            breakdown[ev.node] = breakdown.get(ev.node, 0.0) + ev.cost_usd
         return cls(
             run_id=row.run_id,
             thread_id=row.thread_id,
@@ -158,6 +162,7 @@ class RunDetail(BaseModel):
             revision_counts=values.get("revision_counts") or {},
             final_report_md=values.get("final_report_md") or "",
             usage_log=values.get("usage_log") or [],
+            cost_breakdown=breakdown,
         )
 
 
