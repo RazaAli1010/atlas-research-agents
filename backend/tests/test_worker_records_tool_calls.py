@@ -37,6 +37,8 @@ def test_worker_records_one_toolcall_per_invocation(monkeypatch: pytest.MonkeyPa
         assert record.section_id == "s1"
         assert record.tool == "web_search"
         assert record.urls == ["https://example.com/a"]  # the URL the tool returned
+        # full result text is captured per URL for the groundedness grader
+        assert record.contents == {"https://example.com/a": "content"}
 
 
 def test_worker_records_empty_urls_for_no_result_tool(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,3 +60,4 @@ def test_worker_records_empty_urls_for_no_result_tool(monkeypatch: pytest.Monkey
 
     assert len(out["tool_calls"]) == 1
     assert out["tool_calls"][0].urls == []  # no URLs, but the call is still recorded
+    assert out["tool_calls"][0].contents == {}  # nothing returned, nothing captured

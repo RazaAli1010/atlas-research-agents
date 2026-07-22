@@ -208,9 +208,10 @@ _COVERAGE_SYSTEM = (
 
 _GROUNDEDNESS_SYSTEM = (
     "You are an evaluation judge checking for hallucination. You are given a CLAIM "
-    "from a research report and the SOURCE SNIPPET it cites. Decide whether the source "
-    "snippet supports the claim (true) or not (false), and give a brief reason. Judge "
-    "only against the snippet provided — do not use outside knowledge."
+    "from a research report and the SOURCE MATERIAL it cites (the full text of the "
+    "cited source(s)). Decide whether the source material supports the claim (true) "
+    "or not (false), and give a brief reason. Judge only against the material "
+    "provided — do not use outside knowledge."
 )
 
 
@@ -241,25 +242,55 @@ def coverage_grader(run: EvalRun, judge: BaseChatModel | None = None) -> GraderR
     )
 
 
-def _citable_claims(drafts: list[SectionDraft]) -> list[tuple[str, str]]:
-    """(claim sentence, cited source snippet) pairs across all drafts.
+def _url_to_content(tool_calls: list[ToolCallRecord]) -> dict[str, str]:
+    """Fold every tool call's ``contents`` into a single url -> full-text map.
 
-    A claim is a sentence carrying a ``[n]`` marker; it is paired with the snippet of
-    its first marker that resolves into that draft's own sources.
+    This is the un-truncated evidence the worker actually read. When the same URL is
+    returned by more than one call, keep the longest text (most complete evidence).
+    """
+    mapping: dict[str, str] = {}
+    for record in tool_calls:
+        for url, content in record.contents.items():
+            if content and len(content) > len(mapping.get(url, "")):
+                mapping[url] = content
+    return mapping
+
+
+def _citable_claims(
+    drafts: list[SectionDraft], url_to_content: dict[str, str]
+) -> list[tuple[str, str]]:
+    """(claim sentence, supporting evidence) pairs across all drafts.
+
+    A claim is a sentence carrying ≥1 ``[n]`` marker; its evidence is the full
+    tool-result content of *every* source it cites that resolves into the draft's own
+    sources (all markers, not just the first — a sentence citing ``[3][7]`` is judged
+    against both). Falls back to the stored 300-char snippet when full content is
+    unavailable for that source (e.g. a calculator result, which has no URL).
     """
     claims: list[tuple[str, str]] = []
     for draft in drafts:
         for sentence in _SENTENCE_SPLIT_RE.split(draft.content_md):
+            evidence: list[str] = []
+            seen: set[int] = set()
             for n in (int(x) for x in _MARKER_RE.findall(sentence)):
-                if 1 <= n <= len(draft.sources):
-                    claims.append((sentence.strip(), draft.sources[n - 1].snippet))
-                    break
+                if 1 <= n <= len(draft.sources) and n not in seen:
+                    seen.add(n)
+                    src = draft.sources[n - 1]
+                    full = url_to_content.get(src.url, "") if src.url else ""
+                    evidence.append(full or src.snippet)
+            if evidence:
+                claims.append((sentence.strip(), "\n\n---\n\n".join(evidence)))
     return claims
 
 
 def groundedness_grader(run: EvalRun, judge: BaseChatModel | None = None) -> GraderResult:
-    """Sample ≤5 cited claims and check each is supported by its source snippet. Pass ≥ 0.8."""
-    claims = _citable_claims(run.drafts)
+    """Sample ≤5 cited claims and check each is supported by its cited source(s).
+
+    Judges against the full tool-result content the worker read (via ``tool_calls``),
+    not the 300-char ``Source.snippet``, so support that fell past the snippet
+    truncation is not counted as a hallucination. Pass ≥ 0.8.
+    """
+    claims = _citable_claims(run.drafts, _url_to_content(run.tool_calls))
     if not claims:
         return GraderResult(
             name="groundedness", passed=False, score=0.0, detail="no citable claims"
@@ -270,13 +301,13 @@ def groundedness_grader(run: EvalRun, judge: BaseChatModel | None = None) -> Gra
 
     model = (judge or get_judge_model()).with_structured_output(ClaimGrounded)
     supported = 0
-    for claim, snippet in sample:
+    for claim, evidence in sample:
         verdict = cast(
             ClaimGrounded,
             model.invoke(
                 [
                     ("system", _GROUNDEDNESS_SYSTEM),
-                    ("human", f"--- Claim ---\n{claim}\n\n--- Source snippet ---\n{snippet}"),
+                    ("human", f"--- Claim ---\n{claim}\n\n--- Source material ---\n{evidence}"),
                 ]
             ),
         )

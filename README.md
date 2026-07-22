@@ -162,16 +162,22 @@ the revision budget. Topology becomes
 
 - **Reviewer** (`app/graph/nodes/reviewer.py`) — grades each section's newest *unreviewed*
   draft via structured output (`.with_structured_output(Review, …)`) against a rubric
-  (objective coverage, every claim cited, no fabricated/dangling `[n]` citations, coherence).
+  (objective coverage, every claim cited, **grounding** — each cited claim follows from its
+  source excerpt — and coherence). The draft's sources are rendered *with their excerpts* so
+  the reviewer can judge grounding, and the rubric approves any adequate draft (reserving
+  `revise` for substantive gaps, never stylistic polish) to avoid needless revision loops.
   `verdict` is normalized server-side: `score < 0.7 ⇒ "revise"`, and feedback is guaranteed
   non-empty on a revise. Logs one `UsageEvent` per graded section and recomputes
   `revision_counts[sid]` (= revisions produced so far = highest draft revision).
 - **Routing** (`app/graph/routing.py::route_after_review`) — the *sole* revision-budget gate
-  (the termination guarantee). Re-sends only sections whose latest verdict is `revise` **and**
-  that have produced fewer than `MAX_REVISIONS_PER_SECTION` (2) revisions, carrying
-  `{feedback, previous_draft}`; otherwise routes to the writer. Approved and budget-exhausted
-  sections are never re-sent, so each section is dispatched at most `1 + MAX_REVISIONS_PER_SECTION`
-  times — the loop provably terminates.
+  (the termination guarantee). Re-sends only sections whose latest verdict is `revise`, that
+  have produced fewer than `MAX_REVISIONS_PER_SECTION` (2) revisions, **and** whose last
+  revision raised the reviewer score by at least `_MIN_SCORE_GAIN` (0.05) — a stalled section
+  stops early instead of burning the rest of its budget on non-converging passes (the common
+  source of wasted revision loops). The first revision is always allowed (no prior score to
+  compare). Carries `{feedback, previous_draft}`; otherwise routes to the writer. The score-gain
+  gate only ever *removes* dispatches, so each section is still dispatched at most
+  `1 + MAX_REVISIONS_PER_SECTION` times — the loop provably terminates.
 - **Writer** (`app/graph/nodes/writer.py`) — now selects each section's highest-revision
   **approved** draft (else the best-scoring draft), and prepends a *Limitations* note when a
   section exhausts its budget without approval.

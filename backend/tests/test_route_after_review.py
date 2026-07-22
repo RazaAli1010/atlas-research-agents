@@ -88,7 +88,8 @@ def test_uses_highest_revision_previous_draft() -> None:
         "topic": "T",
         "plan": _plan("s1"),
         "drafts": [_draft("s1", 0), _draft("s1", 1)],
-        "reviews": [_review("s1", "revise"), _review("s1", "revise")],
+        # Score improved 0.4 -> 0.6, so the section is still worth another revision.
+        "reviews": [_review("s1", "revise", 0.4), _review("s1", "revise", 0.6)],
         "revision_counts": {"s1": 1},
         "usage_log": [],
     }
@@ -97,3 +98,34 @@ def test_uses_highest_revision_previous_draft() -> None:
 
     assert isinstance(result, list)
     assert result[0].arg["previous_draft"].revision == 1  # latest draft carried back
+
+
+def test_stalled_section_stops_early() -> None:
+    # A section whose score did not improve after its first revision is not re-sent,
+    # even though revision budget remains — cutting the wasted loop.
+    state = {
+        "topic": "T",
+        "plan": _plan("s1"),
+        "drafts": [_draft("s1", 0), _draft("s1", 1)],
+        "reviews": [_review("s1", "revise", 0.5), _review("s1", "revise", 0.5)],
+        "revision_counts": {"s1": 1},  # budget remains (< MAX), but no progress
+        "usage_log": [],
+    }
+
+    assert route_after_review(state) == "writer"  # type: ignore[arg-type]
+
+
+def test_first_revision_always_allowed() -> None:
+    # No prior score to compare against on the first revision — always dispatched.
+    state = {
+        "topic": "T",
+        "plan": _plan("s1"),
+        "drafts": [_draft("s1", 0)],
+        "reviews": [_review("s1", "revise", 0.5)],
+        "revision_counts": {"s1": 0},
+        "usage_log": [],
+    }
+
+    result = route_after_review(state)  # type: ignore[arg-type]
+
+    assert isinstance(result, list) and [s.arg["section"].id for s in result] == ["s1"]

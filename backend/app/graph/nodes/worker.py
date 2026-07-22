@@ -133,19 +133,30 @@ def _collect(
 
 
 def _record_call(tool_name: str, section_id: str, result: Any) -> ToolCallRecord:
-    """Independent per-invocation record of the URLs a tool returned (F8 ground truth).
+    """Independent per-invocation record of what a tool returned (F8 ground truth).
 
     Kept separate from ``_collect`` (which builds the *cited* sources) so the
     anti-fabrication grader has a record it can trust even if a draft's sources are
-    tampered with. Calculator / no-result calls contribute no URLs.
+    tampered with. ``contents`` additionally carries the full (un-truncated) result
+    text per URL so the groundedness grader judges claims against the same evidence
+    the worker read, not the 300-char ``Source.snippet``. Calculator / no-result
+    calls contribute no URLs and no contents.
     """
     source_tool = cast(Any, TOOL_NAME_TO_SOURCE_TOOL.get(tool_name, "web_search"))
-    urls = (
-        [u for u in (str(r.get("url", "")) for r in result) if u]
-        if isinstance(result, list)
-        else []
+    urls: list[str] = []
+    contents: dict[str, str] = {}
+    if isinstance(result, list):
+        for r in result:
+            url = str(r.get("url", ""))
+            if not url:
+                continue
+            urls.append(url)
+            content = str(r.get("content", ""))
+            if content:
+                contents[url] = content
+    return ToolCallRecord(
+        section_id=section_id, tool=source_tool, urls=urls, contents=contents
     )
-    return ToolCallRecord(section_id=section_id, tool=source_tool, urls=urls)
 
 
 def _build_messages(

@@ -31,12 +31,18 @@ def fan_out(state: ResearchState) -> list[Send]:
     ]
 
 
-def _latest_review_by_section(reviews: list[Review]) -> dict[str, Review]:
-    """Most recent ``Review`` per ``section_id`` (reviews accrue in wave order)."""
-    latest: dict[str, Review] = {}
+# A revision must raise the reviewer's score by at least this much to justify spending
+# more budget. A section whose score stalled won't be rescued by another identical pass,
+# so we stop early instead of burning the rest of the budget (cuts wasted revision loops).
+_MIN_SCORE_GAIN = 0.05
+
+
+def _reviews_by_section(reviews: list[Review]) -> dict[str, list[Review]]:
+    """All reviews per ``section_id`` in wave order (oldest first)."""
+    grouped: dict[str, list[Review]] = {}
     for review in reviews:
-        latest[review.section_id] = review
-    return latest
+        grouped.setdefault(review.section_id, []).append(review)
+    return grouped
 
 
 def _latest_draft_by_section(drafts: list[SectionDraft]) -> dict[str, SectionDraft]:
@@ -50,28 +56,36 @@ def _latest_draft_by_section(drafts: list[SectionDraft]) -> dict[str, SectionDra
 
 
 def route_after_review(state: ResearchState) -> list[Send] | str:
-    """Re-send failing sections with budget left; otherwise route to ``writer``.
+    """Re-send failing sections with budget left *and* still improving; else ``writer``.
 
     This is the *sole* revision-budget gate — the loop-termination guarantee.
     ``revision_counts[sid]`` is the number of revisions already produced (highest
     draft revision), maintained by the reviewer. A section is re-sent iff its latest
-    verdict is ``revise`` and it has produced fewer than ``MAX_REVISIONS_PER_SECTION``
-    revisions. Approved and budget-exhausted sections are left alone, so each section
-    is dispatched at most ``1 + MAX_REVISIONS_PER_SECTION`` times.
+    verdict is ``revise``, it has produced fewer than ``MAX_REVISIONS_PER_SECTION``
+    revisions, AND (once it has already been revised) its last revision raised the
+    reviewer score by at least ``_MIN_SCORE_GAIN``. The score-gain gate stops a
+    stalled section early instead of burning the rest of its budget on passes that
+    are not converging — the common source of wasted revision loops. It only ever
+    *removes* dispatches, so the ``≤ 1 + MAX_REVISIONS_PER_SECTION`` bound (and thus
+    termination) is preserved. The first revision is always allowed (no prior score
+    to compare against).
     """
     topic = state["topic"]
     plan_by_id = {section.id: section for section in state["plan"]}
-    latest_review = _latest_review_by_section(state.get("reviews", []))
+    reviews_by_section = _reviews_by_section(state.get("reviews", []))
     latest_draft = _latest_draft_by_section(state.get("drafts", []))
     counts = state.get("revision_counts", {})
     usage = state.get("usage_log", [])
 
     sends: list[Send] = []
-    for sid, review in latest_review.items():
+    for sid, history in reviews_by_section.items():
+        review = history[-1]
         if review.verdict != "revise":
             continue  # approved: never re-sent
         if counts.get(sid, 0) >= MAX_REVISIONS_PER_SECTION:
             continue  # budget exhausted: give up, keep the best draft
+        if len(history) >= 2 and review.score - history[-2].score < _MIN_SCORE_GAIN:
+            continue  # stalled: last revision didn't help, don't spend more budget
         sends.append(
             Send(
                 "worker",

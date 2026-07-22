@@ -53,6 +53,7 @@ class ToolCallRecord(BaseModel):
     section_id: str
     tool: Literal["web_search", "rag", "calculator"]
     urls: list[str]            # URLs this single tool call returned; [] for calculator
+    contents: dict[str, str] = {}  # url -> full result text read (groundedness evidence); {} for calculator
 
 class ResearchState(TypedDict):
     ...
