@@ -1,16 +1,18 @@
 import { History, Plus, type LucideIcon } from 'lucide-react'
-import { useState } from 'react'
+import { NavLink, Outlet, Route, Routes } from 'react-router'
+import { cn } from './lib/cn'
+import { Button, EmptyState } from './components/ui'
+import { NewRunPage } from './pages/NewRunPage'
+import { RunPage } from './pages/RunPage'
+import { HistoryPage } from './pages/HistoryPage'
+import { DevKitPage } from './pages/DevKitPage'
 
-type NavKey = 'new' | 'history'
-
-const NAV: { key: NavKey; label: string; icon: LucideIcon }[] = [
-  { key: 'new', label: 'New Run', icon: Plus },
-  { key: 'history', label: 'History', icon: History },
+const NAV: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: '/', label: 'New Run', icon: Plus },
+  { to: '/history', label: 'History', icon: History },
 ]
 
-function App() {
-  const [active, setActive] = useState<NavKey>('new')
-
+function AppShell() {
   return (
     <div className="flex h-screen bg-background text-text-primary">
       <aside className="flex w-60 flex-col border-r border-border bg-surface">
@@ -21,46 +23,61 @@ function App() {
           <span className="text-lg font-semibold tracking-tight">Atlas</span>
         </div>
         <nav className="flex flex-col gap-1 px-3">
-          {NAV.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setActive(key)}
-              aria-current={active === key ? 'page' : undefined}
-              className={`flex items-center gap-3 rounded-control px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent ${
-                active === key
-                  ? 'bg-raised text-text-primary'
-                  : 'text-text-secondary hover:bg-raised/60 hover:text-text-primary'
-              }`}
+          {NAV.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-3 rounded-control px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent',
+                  isActive
+                    ? 'bg-raised text-text-primary'
+                    : 'text-text-secondary hover:bg-raised/60 hover:text-text-primary',
+                )
+              }
             >
               <Icon size={16} />
               {label}
-            </button>
+            </NavLink>
           ))}
         </nav>
       </aside>
 
-      <main className="flex flex-1 items-center justify-center p-8">
-        <div className="max-w-sm text-center">
-          <h1 className="text-base font-medium text-text-primary">
-            {active === 'new' ? 'Start a new research run' : 'No runs yet'}
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-            {active === 'new'
-              ? 'Submit a topic and Atlas will plan, research, and synthesize a cited report.'
-              : 'Completed and in-progress runs will appear here.'}
-          </p>
-          <button
-            type="button"
-            onClick={() => setActive('new')}
-            className="mt-5 inline-flex items-center gap-2 rounded-control bg-accent px-4 py-2 text-sm font-medium text-background outline-none transition-colors hover:bg-accent/90 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            <Plus size={16} />
-            New Run
-          </button>
-        </div>
+      <main className="flex-1 overflow-y-auto">
+        <Outlet />
       </main>
     </div>
+  )
+}
+
+function NotFound() {
+  return (
+    <div className="flex min-h-full items-center justify-center px-6 py-16">
+      <EmptyState
+        title="Page not found"
+        description="The page you're looking for doesn't exist."
+        action={
+          <NavLink to="/">
+            <Button>Back to New Run</Button>
+          </NavLink>
+        }
+      />
+    </div>
+  )
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route path="/" element={<NewRunPage />} />
+        <Route path="/runs/:id" element={<RunPage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        {import.meta.env.DEV && <Route path="/dev/kit" element={<DevKitPage />} />}
+        <Route path="*" element={<NotFound />} />
+      </Route>
+    </Routes>
   )
 }
 

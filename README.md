@@ -290,3 +290,46 @@ git diff --stat -- app/graph/nodes/   # empty: routing changed no node code
 # Full comparison (real OpenAI + Tavily calls, needs live keys) — see evals/EXPERIMENTS.md:
 uv run python evals/run_benchmark.py --n 20 --seed 42
 ```
+
+---
+
+## F10 — Frontend foundation: API layer, design system & New Run flow
+
+A production-feeling React shell: a typed API client + TanStack Query hooks, a reconnecting
+SSE hook feeding a Zustand store, a hand-built Tailwind UI kit, `react-router` v7 routing,
+and a working New Run flow that lands on `/runs/:id` in a live connection state.
+
+### Configuration
+
+- **`react-router@^7`** is a runtime dependency (declarative/library mode — import router
+  primitives from `react-router`, **not** `react-router-dom`). Fresh clones get it via
+  `npm install`; if adding to an older checkout run `npm i react-router@^7`.
+- **`VITE_API_URL`** (see `frontend/.env.example`) is the API base URL. Leave it **empty**
+  for local dev — same-origin requests hit the Vite dev proxy, which forwards `/api` →
+  `http://localhost:8000` (no CORS). In production (F13) set it to the API origin.
+
+### Run it
+
+```bash
+# terminal 1 — backend (dev, sqlite)
+cd backend && uv run uvicorn app.main:app --port 8000
+
+# terminal 2 — frontend
+cd frontend && npm install && npm run dev
+# → http://localhost:5173
+#   New Run: enter "Compare vector database pricing for a seed-stage startup",
+#   press ⌘/Ctrl+Enter → navigates to /runs/<id>; the Run page shows a status Badge
+#   and a connection indicator ("connecting…" → "live") while SSE events accumulate.
+# → http://localhost:5173/dev/kit — visual QA of every UI-kit variant (dev build only).
+# → stop & restart the backend while on /runs/<id> → "reconnecting…", then the hook
+#   replays the full run history without duplication (F6 replays its buffer per connect).
+```
+
+### Verify
+
+```bash
+cd frontend
+npm run test && npx tsc --noEmit && npm run lint
+# 18 vitest specs pass (envelope round-trip, SSE reconnect, keyboard nav, client,
+# New Run create flow, query invalidation); tsc + eslint clean.
+```
