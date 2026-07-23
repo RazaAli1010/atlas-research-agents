@@ -208,7 +208,7 @@ START → planner → approval_gate(interrupt) → [Send fan-out] worker×N → 
 ```
 POST   /api/runs                 {topic}            → 201 {run_id, thread_id}
 GET    /api/runs                                    → 200 [{run_id, topic, status, created_at, cost_usd}]
-GET    /api/runs/{run_id}                           → 200 RunDetail (full state snapshot + cost_breakdown + trace_id)
+GET    /api/runs/{run_id}                           → 200 RunDetail (full state snapshot + cost_breakdown + trace_id + sources)
 POST   /api/runs/{run_id}/resume {action, plan?}    → 202 (resumes an interrupted run)
 GET    /api/runs/{run_id}/events                    → SSE stream (see below)
 GET    /api/runs/{run_id}/report.md                 → 200 markdown download (implemented in F7)
@@ -219,7 +219,11 @@ GET    /api/health                                  → 200 {status:"ok"}
 summed per node, a derived field (never stored in `ResearchState` §5) — and
 `trace_id: str | null` (F11), the LangSmith root run id for the run's trace deep-link
 (null when `LANGSMITH_TRACING` is off; captured server-side via `collect_runs`, persisted
-on the `runs` row). Frontend `types.ts` mirrors both in F11.
+on the `runs` row). Frontend `types.ts` mirrors both in F11. It also carries
+`sources: Source[]` (F12) — the writer's global deduped source list where index `i`
+corresponds to the report's `[i+1]` citation marker; derived on read via the writer's
+own `report_sources()`, never stored in `ResearchState` §5. Frontend `types.ts` mirrors
+`sources` in F12.
 
 **SSE event envelope** (every event is one JSON object, `event:` field set to `type`):
 

@@ -25,11 +25,13 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.sse import to_sse
+from app.graph.nodes.writer import report_sources
 from app.graph.state import (
     MAX_SECTIONS,
     Review,
     SectionDraft,
     SectionPlan,
+    Source,
     UsageEvent,
 )
 from app.persistence.runs_repo import RunRow
@@ -143,12 +145,18 @@ class RunDetail(BaseModel):
     usage_log: list[UsageEvent]
     cost_breakdown: dict[str, float]  # node -> summed cost_usd (derived from usage_log)
     trace_id: str | None = None  # LangSmith root run id for the deep-link (F11); null when untraced
+    sources: list[Source] = []  # writer's global deduped list; index i <-> [i+1] (F12, derived)
 
     @classmethod
     def from_row_and_state(cls, row: RunRow, values: dict[str, Any]) -> RunDetail:
         breakdown: dict[str, float] = {}
         for ev in values.get("usage_log") or []:
             breakdown[ev.node] = breakdown.get(ev.node, 0.0) + ev.cost_usd
+        sources = report_sources(
+            values.get("plan") or [],
+            values.get("drafts") or [],
+            values.get("reviews") or [],
+        )
         return cls(
             run_id=row.run_id,
             thread_id=row.thread_id,
@@ -165,6 +173,7 @@ class RunDetail(BaseModel):
             usage_log=values.get("usage_log") or [],
             cost_breakdown=breakdown,
             trace_id=row.trace_id,
+            sources=sources,
         )
 
 

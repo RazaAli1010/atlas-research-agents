@@ -374,3 +374,43 @@ npm run test && npx tsc --noEmit && npm run lint
 # runView / langsmith / relativeTime helpers, NodeTimeline / SectionCard / CostMeter,
 # RunPage (late-join replay, disabled approval, trace deep-link + fallback), HistoryPage.
 ```
+
+## F12 — Frontend: plan approval (HITL) & report viewer
+
+Closes the human-in-the-loop and delivers the final artifact. When a run is
+`awaiting_approval`, `RunPage` renders **`PlanApprovalPanel`** (`src/components/approval/`)
+in place of F11's placeholder: the proposed plan becomes editable cards — inline title,
+objective textarea, suggested-query chips (add on Enter / remove), up/down reorder (no
+drag-drop dependency), delete, and "Add section" capped at `MAX_SECTIONS = 6`. Approving
+resumes the run via `useResumeRun` — **Approve plan** (`{action:"approve"}`) when the plan is
+untouched, or, once edited, **Approve with edits** (`{action:"edit", plan}`, ids renumbered
+`s1..sN`) with a secondary "Discard edits & approve original" so edits are never silently
+lost. Edits actually change the run: a deleted section produces no worker. A `409` shows
+"already resumed" and refetches; the whole flow is keyboard-operable.
+
+On `done`, **`ReportViewer`** (`src/components/report/`) renders the report markdown
+(`react-markdown` + `remark-gfm`, `.prose-atlas` typography) with `[n]` citation markers as
+accent superscript links to a structured **`SourceList`** (favicon via Google s2, title, URL,
+tool-origin badge). Actions: copy markdown, download `.md` (F7 endpoint), open the LangSmith
+trace (reuses `VITE_LANGSMITH_BASE_URL`).
+
+### Backend delta
+
+`GET /api/runs/{id}` (`RunDetail`) now carries **`sources: Source[]`** — the writer's global
+deduped source list where index `i` corresponds to the report's `[i+1]` marker. It is derived
+on read via `report_sources()` (`app/graph/nodes/writer.py`, reusing `_select_drafts` +
+`merge_sections`), never stored in `ResearchState` — guaranteeing `sources[n-1]` ↔ `[n]`
+parity by construction, so the frontend links citations without reconstructing dedup.
+
+### Verify
+
+```bash
+cd backend && uv run pytest -q tests/test_run_detail_sources.py && uv run ruff check app tests && uv run mypy app
+cd ../frontend && npm run typecheck && npm run lint && npm run test
+# citations / SourceList / ReportViewer / PlanApprovalPanel (edit round-trip, 409, cap,
+# keyboard), RunPage (interactive approval panel, ReportViewer with clickable citations).
+```
+
+Live happy path: submit a topic → edit the plan (rename + delete a section) → **Approve with
+edits** → the timeline shows only the kept sections advancing → the report renders with
+clickable `[n]` citations → **Download .md** matches `curl .../report.md` byte-for-byte.
