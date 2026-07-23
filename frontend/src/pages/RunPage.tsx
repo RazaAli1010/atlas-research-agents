@@ -72,6 +72,22 @@ export function RunPage() {
   const contentBySection = new Map(detail?.drafts?.map((d) => [d.section_id, d.content_md]))
   const reportMd = view.reportMd ?? (detail?.final_report_md ? detail.final_report_md : null)
 
+  const awaitingApproval = status === 'awaiting_approval'
+
+  const timelineCard = (
+    <Card header="Progress">
+      {hasStarted ? (
+        <NodeTimeline view={view} />
+      ) : (
+        <div className="space-y-3">
+          {[0, 1, 2, 3, 4].map((k) => (
+            <Skeleton key={k} className="h-4 w-3/4" />
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       {/* Header */}
@@ -99,79 +115,71 @@ export function RunPage() {
         </div>
       )}
 
-      {/* Body: timeline rail + main column (rail collapses under 1100px). */}
-      <div className="mt-8 grid gap-6 min-[1100px]:grid-cols-[260px_1fr]">
-        <aside className="min-[1100px]:order-1">
-          <Card header="Progress">
-            {hasStarted ? (
-              <NodeTimeline view={view} />
-            ) : (
-              <div className="space-y-3">
-                {[0, 1, 2, 3, 4].map((k) => (
-                  <Skeleton key={k} className="h-4 w-3/4" />
+      {awaitingApproval ? (
+        /* Approval: full-width plan with the progress timeline stacked above it. */
+        <div className="mt-8 space-y-6">
+          {timelineCard}
+          <PlanApprovalPanel key={id} runId={id ?? ''} proposedPlan={plan} />
+        </div>
+      ) : (
+        /* Body: narrow timeline rail + wide main column (rail collapses under 1100px). */
+        <div className="mt-8 grid gap-6 min-[1100px]:grid-cols-[260px_1fr]">
+          <aside>{timelineCard}</aside>
+
+          <main className="space-y-6">
+            {view.sections.length > 0 ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {view.sections.map((s) => (
+                  <SectionCard
+                    key={s.id}
+                    section={s}
+                    runId={id ?? ''}
+                    contentMd={contentBySection.get(s.id)}
+                  />
                 ))}
               </div>
+            ) : (
+              !hasStarted && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Skeleton className="h-28 w-full" />
+                  <Skeleton className="h-28 w-full" />
+                </div>
+              )
             )}
-          </Card>
-        </aside>
 
-        <main className="space-y-6">
-          {status === 'awaiting_approval' && (
-            <PlanApprovalPanel key={id} runId={id ?? ''} proposedPlan={plan} />
-          )}
-
-          {view.sections.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {view.sections.map((s) => (
-                <SectionCard
-                  key={s.id}
-                  section={s}
-                  runId={id ?? ''}
-                  contentMd={contentBySection.get(s.id)}
-                />
-              ))}
-            </div>
-          ) : (
-            !hasStarted && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Skeleton className="h-28 w-full" />
-                <Skeleton className="h-28 w-full" />
-              </div>
-            )
-          )}
-
-          {reportMd !== null ? (
-            <Card header="Report ready">
-              <div className="flex items-start gap-3">
-                <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-control bg-accent/15 text-accent">
-                  <FileText size={18} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-3 text-sm text-text-secondary">
-                    {reportPreview(reportMd)}
-                  </p>
-                  <div className="mt-3 flex items-center gap-4">
-                    <Link
-                      to={`/runs/${id}/report`}
-                      className="inline-flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm font-medium text-background outline-none transition-colors hover:bg-accent/90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface focus-visible:ring-accent"
-                    >
-                      Open full report
-                      <ArrowRight size={14} />
-                    </Link>
-                    <span className="font-mono text-xs text-text-secondary">
-                      {(detail?.sources?.length ?? 0)} sources
-                    </span>
+            {reportMd !== null ? (
+              <Card header="Report ready">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-control bg-accent/15 text-accent">
+                    <FileText size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-3 text-sm text-text-secondary">
+                      {reportPreview(reportMd)}
+                    </p>
+                    <div className="mt-3 flex items-center gap-4">
+                      <Link
+                        to={`/runs/${id}/report`}
+                        className="inline-flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm font-medium text-background outline-none transition-colors hover:bg-accent/90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface focus-visible:ring-accent"
+                      >
+                        Open full report
+                        <ArrowRight size={14} />
+                      </Link>
+                      <span className="font-mono text-xs text-text-secondary">
+                        {(detail?.sources?.length ?? 0)} sources
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Card>
-          ) : (
-            <Card header="Report">
-              <ReportPane writerDraft={view.writerDraft} reportMd={null} />
-            </Card>
-          )}
-        </main>
-      </div>
+              </Card>
+            ) : (
+              <Card header="Report">
+                <ReportPane writerDraft={view.writerDraft} reportMd={null} />
+              </Card>
+            )}
+          </main>
+        </div>
+      )}
     </div>
   )
 }
