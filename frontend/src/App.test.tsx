@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { api } from './api/client'
 
 function renderApp(path = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -16,6 +17,8 @@ function renderApp(path = '/') {
 }
 
 describe('App shell', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   it('renders the Atlas wordmark and sidebar nav', () => {
     renderApp('/')
     expect(screen.getByText('Atlas')).toBeInTheDocument()
@@ -23,8 +26,9 @@ describe('App shell', () => {
     expect(screen.getByText('History')).toBeInTheDocument()
   })
 
-  it('routes /history to the empty-state placeholder', () => {
+  it('routes /history to the runs list (empty state when there are none)', async () => {
+    vi.spyOn(api, 'listRuns').mockResolvedValue([])
     renderApp('/history')
-    expect(screen.getByText('No runs yet')).toBeInTheDocument()
+    expect(await screen.findByText('No runs yet')).toBeInTheDocument()
   })
 })

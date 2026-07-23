@@ -10,6 +10,8 @@ import {
   Tabs,
   Tooltip,
 } from '../components/ui'
+import { ConnectionPill, CostMeter, NodeTimeline, SectionCard } from '../components/run'
+import type { RunView } from '../lib/runView'
 import type { RunStatus } from '../types'
 
 const STATUSES: RunStatus[] = [
@@ -21,6 +23,39 @@ const STATUSES: RunStatus[] = [
   'done',
   'failed',
 ]
+
+// Sample RunView for the F11 run-component showcase (mid-run, one section revising).
+const SAMPLE_VIEW: RunView = {
+  stages: { plan: 'done', approval: 'done', research: 'active', review: 'pending', write: 'pending' },
+  sections: [
+    {
+      id: 's1',
+      title: 'Pricing tiers',
+      objective: 'Compare per-vector storage costs across managed vendors',
+      state: 'revising',
+      revision: 1,
+      maxRevisions: 2,
+      lastReview: { section_id: 's1', verdict: 'revise', score: 0.44, feedback: 'Add the free-tier row.' },
+      sourceCount: 5,
+    },
+    {
+      id: 's2',
+      title: 'Scale limits',
+      objective: 'Document throughput and index-size ceilings',
+      state: 'approved',
+      revision: 0,
+      maxRevisions: 2,
+      lastReview: { section_id: 's2', verdict: 'approved', score: 0.87, feedback: '' },
+      sourceCount: 3,
+    },
+  ],
+  costTotal: 1.27,
+  costByNode: { planner: 0.2, worker: 0.81, reviewer: 0.26 },
+  writerDraft: '',
+  reportMd: null,
+  errorMessage: null,
+  status: 'researching',
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -114,6 +149,25 @@ export function DevKitPage() {
             description="Start a run to see it here."
             action={<Button>New Run</Button>}
           />
+        </div>
+      </Section>
+
+      <Section title="Run components (F11)">
+        <div className="flex flex-wrap items-center gap-3">
+          <ConnectionPill state="open" />
+          <ConnectionPill state="reconnecting" />
+          <ConnectionPill state="closed" />
+          <CostMeter costTotal={SAMPLE_VIEW.costTotal} costByNode={SAMPLE_VIEW.costByNode} />
+        </div>
+        <div className="grid w-full gap-4 min-[900px]:grid-cols-[240px_1fr]">
+          <Card header="Progress">
+            <NodeTimeline view={SAMPLE_VIEW} />
+          </Card>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {SAMPLE_VIEW.sections.map((s) => (
+              <SectionCard key={s.id} section={s} />
+            ))}
+          </div>
         </div>
       </Section>
     </div>

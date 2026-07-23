@@ -28,3 +28,27 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
+
+/* Active-stage pulse for the run timeline (F11): a calm opacity/ring breathe, never a
+   spinner. Respects reduced-motion. */
+@keyframes atlas-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 55%, transparent);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 0%, transparent);
+  }
+}
+
+.atlas-pulse {
+  animation: atlas-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-pulse {
+    animation: none;
+  }
+}

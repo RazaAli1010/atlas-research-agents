@@ -336,3 +336,41 @@ npm run test && npx tsc --noEmit && npm run lint
 # 18 vitest specs pass (envelope round-trip, SSE reconnect, keyboard nav, client,
 # New Run create flow, query invalidation); tsc + eslint clean.
 ```
+
+## F11 — Frontend: live run view (node timeline, sections, cost meter)
+
+The screen that sells Atlas: `RunPage` renders the agent working in real time. A pure
+`deriveRunView(events, plan, drafts)` fold (`src/lib/runView.ts`) turns the SSE event log into
+one view model — so a run renders identically whether joined live or reconstructed from replay.
+On top of it: a `NodeTimeline` graph-stage stepper (Plan → Approval → Research → Review → Write)
+whose Research stage expands to per-section rows with `rev n/2` chips (the LangGraph cycle made
+visible), independently-updating `SectionCard`s, a `CostMeter` (monospace total, warn past
+`$1.20`, per-node hover breakdown), and a `ReportPane` that streams writer tokens then swaps to
+rendered markdown. `HistoryPage` lists past runs and links into the run view.
+
+### Configuration
+
+- **`VITE_LANGSMITH_BASE_URL`** (see `frontend/.env.example`) — the LangSmith project URL used to
+  deep-link a run's trace from the error banner: `${VITE_LANGSMITH_BASE_URL}/r/${trace_id}`,
+  where `trace_id` comes from `RunDetail` (captured server-side, see F2/observability). Leave it
+  empty to fall back to a static LangSmith link — the "View trace in LangSmith" link is never dead.
+
+### Run it
+
+```bash
+# backend + frontend as in F10; set VITE_LANGSMITH_BASE_URL in frontend/.env for deep-links.
+cd frontend && npm run dev   # → http://localhost:5173
+# Start a run and open /runs/<id>: plan stage completes → "waiting for approval" placeholder →
+# (approve via the API/F5 resume) → section rows advance independently → a section shows a
+# rev 1/2 chip with reviewer feedback → writer tokens stream → the pane renders the report.
+# → /dev/kit shows the F11 run components in the "Run components (F11)" section.
+```
+
+### Verify
+
+```bash
+cd frontend
+npm run test && npx tsc --noEmit && npm run lint
+# runView / langsmith / relativeTime helpers, NodeTimeline / SectionCard / CostMeter,
+# RunPage (late-join replay, disabled approval, trace deep-link + fallback), HistoryPage.
+```
