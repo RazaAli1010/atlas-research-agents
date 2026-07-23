@@ -1,416 +1,197 @@
 # Atlas — Autonomous Research & Report Agent
 
-Atlas plans a research topic into sections, pauses for human approval, researches
-sections in parallel, self-corrects via review, and synthesizes a cited Markdown report —
-streamed live to a React frontend.
+Give Atlas a research topic. It plans the report into sections, **pauses for your approval**,
+researches every section **in parallel** with real tools, **grades and revises** weak sections
+in a self-correcting loop, and synthesizes a cited Markdown report — **streamed to the browser
+live**, and **durable enough to survive a server restart mid-run**.
 
-See `CLAUDE.md` for the full spec and `specs/` for per-feature specs.
+Built on **LangGraph 1.x** (StateGraph · `Send` fan-out · `interrupt()` HITL · Postgres
+checkpointer), **FastAPI + SSE**, and a hand-built **React 19 + Tailwind v4** SPA.
 
-## Repository layout
+![Atlas demo](docs/atlas-demo.gif)
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  START((start)) --> planner
+  planner --> approval["approval_gate<br/>interrupt() · HITL"]
+  approval -->|Send fan-out| worker["worker × N<br/>web_search · rag · calculator"]
+  worker --> reviewer
+  reviewer -->|revise ≤2 per section| worker
+  reviewer -->|all approved| writer
+  writer --> END((end))
+```
+
+- **planner** decomposes the topic into 3–6 sections (structured output).
+- **approval_gate** calls `interrupt()` and waits for a human approve/edit — persisted by the
+  checkpointer, so the pause survives a process restart.
+- **worker × N** fan out via the `Send` API, each researching one section with bounded tool use.
+- **reviewer** grades every draft; weak sections loop back to a worker with concrete feedback
+  (hard-capped at 2 revisions/section, with a no-progress early-stop).
+- **writer** merges the best drafts into one report with a deduplicated, numbered source list.
+
+## Why LangGraph
+
+This workflow is a poor fit for a linear chain or a plain DAG, and LangGraph earns its place on
+three specific features:
+
+- **Durable interrupts.** `interrupt()` + a checkpointer turn "pause for human approval" into a
+  first-class, persisted state. A run can be killed at the approval gate and **resumed by a fresh
+  process** from Postgres — the core thesis of the project (see the durability demo below).
+- **`Send` fan-out.** The planner produces a variable number of sections; the `Send` API
+  dispatches one parallel `worker` per section without hardcoding the width.
+- **Cycles.** The reviewer→worker revise loop is a real cycle with a bounded budget — something a
+  DAG framework can't express. Conditional edges make termination provable
+  (`route_after_review` dispatches each section at most `1 + MAX_REVISIONS_PER_SECTION` times).
+
+## Benchmark results
+
+Numbers are **real** and reproduced from the eval harness (`backend/evals/`). They are a small
+**smoke sample (n=4, seed 42)** — directional, not a full benchmark. Reproduce with
+`uv run python evals/run_benchmark.py --smoke`.
+
+**Latest run** — `backend/evals/SAMPLE_RESULTS.md` (routed models, strong judge `gpt-4o`):
+
+| Metric | Value |
+| --- | --- |
+| Task success rate | **25.0%** (1/4 topics clear the 0.8 groundedness bar) |
+| Latency p50 / p95 | **60.8s / 121.2s** |
+| Mean cost / run | **$0.0883** |
+| First-failing grader | **groundedness** on 3/4 failures |
+
+**Model-routing cost study** — `backend/evals/EXPERIMENTS.md` (F9; costs derived by re-pricing a
+measured run, so token trajectories are held fixed across tiers):
+
+| Config | Mean cost / run | Basis |
+| --- | --- | --- |
+| all `gpt-4o` | $0.3995 | projected |
+| **routed (default)** — worker→`gpt-4o-mini`, rest→`gpt-4o` | **$0.1250** | projected |
+| all `gpt-4o-mini` | $0.0240 | measured |
+
+Routing the high-volume worker to the cheap tier **saves ~68.7% vs all-`gpt-4o`** while keeping
+planning/reviewing/writing on the strong model. **Caveat:** the "success stays within 3 points of
+all-`gpt-4o`" quality gate has **not** yet been verified live (n=20) — it's an open item, not a
+passed check.
+
+### Failure taxonomy → what changed
+
+**Groundedness was the dominant failure (75% of failed runs)** — drafts made claims the retrieved
+sources didn't support. Two changes moved the needle:
+
+- **Reviewer grounding rubric** (F4/F7): the reviewer sees each source *with its excerpt* and
+  judges whether every cited claim actually follows from it, reserving `revise` for substantive
+  gaps (not style).
+- **No-progress early-stop** (F4): a section whose revision didn't raise its score stops early
+  instead of burning its whole budget on non-converging passes.
+
+Net effect across the four topics: total revision loops **39 → 15 (−62%)**, p50 latency
+**146.3s → 60.8s (−58%)**, and groundedness improved on every topic (DNS crossed the passing bar).
+
+## Quickstart
+
+### Option A — Docker (full stack, one command)
+
+```bash
+git clone <repo> && cd atlas-research-agents
+cp .env.example .env          # then fill OPENAI_API_KEY + TAVILY_API_KEY
+docker compose up --build     # postgres → backend → frontend
+# → open http://localhost
+```
+
+`docker compose up` builds all three services (Postgres, FastAPI backend, nginx-served SPA).
+The backend uses the Postgres checkpointer; nginx proxies `/api` (SSE-safe) to the backend.
+
+**Durability demo (the thesis):** start a run, stop at the approval pause, then
+`docker compose restart backend`, and approve in the browser — the run resumes from the Postgres
+checkpoint to a finished report.
+
+### Option B — Dev mode (hot reload)
+
+```bash
+# Postgres only (checkpoints); backend + frontend run on the host
+docker compose up -d postgres
+
+# terminal 1 — backend (sqlite checkpointer by default)
+cd backend && cp ../.env.example .env   # fill real keys
+uv sync && uv run uvicorn app.main:app --port 8000
+
+# terminal 2 — frontend (Vite dev proxy forwards /api → :8000)
+cd frontend && npm install && npm run dev
+# → http://localhost:5173
+```
+
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the env matrix, the single-worker constraint, Postgres
+backup, CORS, and a worked Fly.io example.
+
+## Repository map
 
 ```
 atlas-research-agents/
-├── docker-compose.yml        # Postgres (dev DB)
-├── .github/workflows/ci.yml  # backend + frontend CI
-├── backend/                  # FastAPI + LangGraph (Python 3.12, uv)
-└── frontend/                 # React 19 + TS + Vite + Tailwind v4
+├── docker-compose.yml          # postgres + backend + frontend
+├── .env.example                # backend/compose config (dev + Docker)
+├── DEPLOYMENT.md               # production notes
+├── .github/workflows/          # ci.yml (lint/type/test + docker builds) · evals-smoke.yml (manual)
+├── backend/                    # Python 3.12 · uv · FastAPI · LangGraph
+│   ├── Dockerfile              # multi-stage uv → slim, non-root, healthcheck
+│   ├── app/
+│   │   ├── main.py             # FastAPI factory + /api/health
+│   │   ├── config.py           # pydantic-settings Settings
+│   │   ├── api/                # run lifecycle routes + SSE
+│   │   ├── graph/              # state.py (schema) · builder · nodes · routing
+│   │   ├── tools/              # web_search · rag · calculator
+│   │   ├── llm/router.py       # role→model routing + usage tracking
+│   │   ├── persistence/        # checkpointer factory · runs_repo
+│   │   └── services/           # run_service (start/resume)
+│   └── evals/                  # benchmark harness + reports
+└── frontend/                   # React 19 · TS · Vite · Tailwind v4
+    ├── Dockerfile              # node build → nginx
+    ├── nginx.conf              # SPA + /api proxy (SSE-safe)
+    └── src/                    # api client · types · stores · components · pages
 ```
 
-## Prerequisites
+## Limitations (honest)
 
-- [uv](https://docs.astral.sh/uv/) (Python 3.12)
-- Node.js 20+
-- Docker + Docker Compose
+- **Single backend worker.** The SSE registry is in-process, so the backend must run one worker
+  and can't be horizontally scaled as-is. The real fix (task queue + Redis pub/sub) is described
+  in [`DEPLOYMENT.md`](DEPLOYMENT.md); run state is already durable in Postgres.
+- **Benchmark is a smoke sample (n=4).** Absolute numbers are noisy; treat them as directional.
+- **F9 quality-parity gate is open.** The cost win is measured; the "routing doesn't hurt
+  success" check needs a live n=20 run.
+- **No authentication / multi-tenancy.** Anyone who can reach the API can start/read runs.
+- **RAG tool is optional & external.** Unset `RAG_SERVICE_URL` disables it; the graph runs on
+  web search + calculator alone.
 
----
+## Feature log & verification
 
-## F1 — Scaffolding, config & dev environment
-
-A running skeleton: FastAPI `/api/health`, a dark React app shell, Postgres in Docker,
-green CI. No graph/LLM/page logic yet — later features fill in the stubbed modules.
-
-### 1. Database
+Atlas was built feature-by-feature (spec-driven); each spec lives in [`specs/`](specs/) with its
+own acceptance criteria. Quick per-area verification:
 
 ```bash
-docker compose up -d postgres
-docker compose ps            # postgres should report "healthy"
+# backend — lint, typecheck, tests (offline; model + saver mocked)
+cd backend && uv run ruff check . && uv run mypy app evals && uv run pytest
+
+# frontend — lint, typecheck (tsc -b), tests
+cd frontend && npm run lint && npm run typecheck && npm run test
+
+# eval smoke (real LLM/tool calls; needs live keys)
+cd backend && uv run python evals/run_benchmark.py --smoke
 ```
 
-### 2. Backend
-
-```bash
-cd backend
-cp ../.env.example .env       # IMPORTANT: .env must live in backend/ (pydantic-settings
-                             # loads it relative to the process cwd)
-uv sync
-uv run ruff check . && uv run mypy app && uv run pytest
-uv run uvicorn app.main:app --reload
-# → http://localhost:8000/api/health returns {"status":"ok"}
-```
-
-`app/config.py` `Settings` fails fast at startup if a required key
-(`OPENAI_API_KEY`, `TAVILY_API_KEY`) is missing. `CORS_ORIGINS` is a comma-separated list.
-
-### 3. Frontend
-
-```bash
-cd frontend
-npm install
-npm run lint && npm run typecheck && npm run test
-npm run dev
-# → http://localhost:5173 shows the dark Atlas shell (sidebar: New Run / History)
-```
-
----
-
-## F2 — Graph state, planner node & walking skeleton graph
-
-The typed `ResearchState` (`app/graph/state.py`, the single source of truth for §5) plus a
-minimal compiled graph `START → planner → writer → END`. The planner decomposes a topic into
-3–6 sections via structured output; the writer (F2 stub) renders them as a Markdown outline.
-Every LLM call goes through `app/llm/router.py` (`get_model` / `track_usage`), and token cost is
-recorded into `usage_log`. Interrupts, worker fan-out, tools, and the reviewer arrive in F3–F5.
-
-### Run the skeleton
-
-```bash
-cd backend
-# .env must live in backend/ (see F1) with a real OPENAI_API_KEY
-uv run python -m app.graph.demo "Compare vector database pricing for a startup"
-# → prints a 3–6 item plan outline and `total_cost_usd:` (4 decimals, e.g. 0.0002)
-```
-
-Set `LANGSMITH_TRACING=true` (+ a valid `LANGSMITH_API_KEY`) to see the run in the LangSmith
-`atlas` project with named `planner` / `writer` nodes. The FastAPI server enables tracing
-the same way (via `enable_langsmith` in `create_app`); when tracing is on, each run's
-LangSmith root run id is captured (`collect_runs`) and surfaced as `RunDetail.trace_id`, which
-the frontend (F11) turns into a "View trace in LangSmith" deep-link.
-
-### Verify
-
-```bash
-cd backend
-uv run pytest && uv run ruff check . && uv run mypy app
-```
-
-The checkpointer backend is selected by `CHECKPOINT_BACKEND` (`sqlite` dev → `atlas_checkpoints.sqlite`,
-`postgres` prod). Tests use an in-memory / temp-file saver and mock the model, so they run offline.
-
-### Configuration
-
-All config is environment-driven (12-factor). Copy `.env.example` → `backend/.env` and
-fill real values for local LLM/search/tracing. Never commit `.env`.
-
-| Var | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `OPENAI_API_KEY` | ✅ | — | sole LLM provider |
-| `TAVILY_API_KEY` | ✅ | — | web search |
-| `RAG_SERVICE_URL` | | — | optional RAG service base URL; unset → `rag_search` tool disabled |
-| `DEFAULT_MODEL` | | `openai:gpt-4o-mini` | default chat model (provider-prefixed) |
-| `LANGSMITH_API_KEY` | | — | tracing (optional) |
-| `LANGSMITH_TRACING` | | `false` | |
-| `LANGSMITH_PROJECT` | | `atlas` | |
-| `DATABASE_URL` | | `postgresql://atlas:atlas@localhost:5432/atlas` | matches compose creds |
-| `CHECKPOINT_BACKEND` | | `sqlite` | `sqlite` \| `postgres` |
-| `CORS_ORIGINS` | | `http://localhost:5173` | comma-separated |
-
-## F3 — Tools & parallel worker fan-out (Send API)
-
-Workers now research each planned section **in parallel** using real tools, and the writer
-merges their drafts into a cited report. Topology becomes
-`START → planner → [fan_out] worker×N → writer → END`.
-
-- **Tools** (`app/tools/`, each a `@tool` with an LLM-facing docstring):
-  - `web_search` — Tavily (`langchain-tavily`), ≤5 results normalized to `{url,title,content}`,
-    content truncated to 1,000 chars; degrades to `[]` on error/zero results.
-  - `rag_search` — POSTs the user's RAG service at `RAG_SERVICE_URL`; **self-disables** (not
-    registered, logs a warning) when the var is unset, so the graph runs without it.
-  - `calculator` — safe arithmetic via `ast` parsing (no `eval`); rejects `__import__`,
-    attribute/function access, and oversized exponents.
-- **Worker** (`app/graph/nodes/worker.py`) — a hand-written, bounded ReAct loop (`.bind_tools`,
-  no prebuilt agents). Caps at `MAX_TOOL_CALLS_PER_WORKER` (8) tool calls; if run cost ≥
-  `RUN_COST_CEILING_USD` it skips tools and drafts from context (flagged). Sources are numbered
-  as tools return so every `[n]` marker resolves to a `Source`. Has a revision code path
-  (feedback + previous draft) that F4 will wire to the reviewer.
-- **Routing** (`app/graph/routing.py`) — `fan_out(state)` emits one `Send("worker", …)` per section.
-- **Writer** (`app/graph/nodes/writer.py`) — `merge_drafts()` merges drafts in plan order, dedupes
-  sources globally, remaps `[n]` markers to global indices, and appends a `## Sources` list.
-
-### Run it
-
-```bash
-cd backend
-# .env in backend/ with real OPENAI_API_KEY + TAVILY_API_KEY
-uv run python -m app.graph.demo "Compare vector database pricing for a seed-stage startup"
-# → a multi-section report; each section carries [n] markers resolvable to the closing ## Sources
-```
-
-With `LANGSMITH_TRACING=true`, the LangSmith `atlas` project shows overlapping `worker` branch
-timestamps (parallel proof). The graph completes even with `RAG_SERVICE_URL` unset and with Tavily
-returning zero results — affected sections note the source gap.
-
-### Verify
-
-```bash
-cd backend
-uv run pytest && uv run ruff check . && uv run mypy app
-```
-
-## F4 — Reviewer node & self-correction loop
-
-The signature LangGraph cycle. A reviewer grades each section's latest draft; weak
-sections loop back to the workers with concrete feedback; the loop is hard-capped by
-the revision budget. Topology becomes
-`START → planner → [fan_out] worker×N → reviewer → (workers | writer) → END`.
-
-- **Reviewer** (`app/graph/nodes/reviewer.py`) — grades each section's newest *unreviewed*
-  draft via structured output (`.with_structured_output(Review, …)`) against a rubric
-  (objective coverage, every claim cited, **grounding** — each cited claim follows from its
-  source excerpt — and coherence). The draft's sources are rendered *with their excerpts* so
-  the reviewer can judge grounding, and the rubric approves any adequate draft (reserving
-  `revise` for substantive gaps, never stylistic polish) to avoid needless revision loops.
-  `verdict` is normalized server-side: `score < 0.7 ⇒ "revise"`, and feedback is guaranteed
-  non-empty on a revise. Logs one `UsageEvent` per graded section and recomputes
-  `revision_counts[sid]` (= revisions produced so far = highest draft revision).
-- **Routing** (`app/graph/routing.py::route_after_review`) — the *sole* revision-budget gate
-  (the termination guarantee). Re-sends only sections whose latest verdict is `revise`, that
-  have produced fewer than `MAX_REVISIONS_PER_SECTION` (2) revisions, **and** whose last
-  revision raised the reviewer score by at least `_MIN_SCORE_GAIN` (0.05) — a stalled section
-  stops early instead of burning the rest of its budget on non-converging passes (the common
-  source of wasted revision loops). The first revision is always allowed (no prior score to
-  compare). Carries `{feedback, previous_draft}`; otherwise routes to the writer. The score-gain
-  gate only ever *removes* dispatches, so each section is still dispatched at most
-  `1 + MAX_REVISIONS_PER_SECTION` times — the loop provably terminates.
-- **Writer** (`app/graph/nodes/writer.py`) — now selects each section's highest-revision
-  **approved** draft (else the best-scoring draft), and prepends a *Limitations* note when a
-  section exhausts its budget without approval.
-
-### Run it
-
-```bash
-cd backend
-# .env in backend/ with real OPENAI_API_KEY + TAVILY_API_KEY
-LANGSMITH_TRACING=true uv run python -m app.graph.demo \
-  "Give exact 2026 per-GB monthly storage prices for Pinecone, Weaviate, and Qdrant with a break-even table"
-# → deliberately hard topic; `Drafts produced` exceeds the section count when a
-#   section is revised, and the revised section appears in the final report.
-```
-
-With `LANGSMITH_TRACING=true`, the LangSmith `atlas` trace shows at least one
-`worker → reviewer → worker → reviewer → writer` revise→improve cycle.
-
-### Verify
-
-```bash
-cd backend
-uv run pytest && uv run ruff check . && uv run mypy app
-# test_graph_review_loop.py proves an always-revise reviewer still halts within budget.
-```
-
-## F5 — Human-in-the-loop approval gate (interrupt + Command resume)
-
-The graph pauses after planning so a human can review or edit the plan before any
-expensive research runs. The pause is a LangGraph `interrupt()`, persisted by the
-checkpointer, so a run can be **killed at the pause and resumed by a fresh process**.
-Topology becomes
-`START → planner → approval_gate(interrupt) → [fan_out] worker×N → reviewer → (workers | writer) → END`.
-
-- **Approval gate** (`app/graph/nodes/approval.py::approval_gate`) — a single
-  `interrupt({"plan": [...]})` as the node's first statement (no prior side effects, so
-  re-execution on resume is safe). Resume payloads:
-  - `{"action": "approve"}` — keep the plan.
-  - `{"action": "edit", "plan": [ {id, title, objective, suggested_queries}, ... ]}` — replace it;
-    the edited list is clamped to `MAX_SECTIONS` (6).
-
-  Either way the node sets `plan_approved=True` and advances `status` to `researching`, so the
-  fan-out dispatches one worker per (possibly edited) section.
-- **Run metadata** (`app/persistence/runs_repo.py::RunsRepo`) — a thin, hand-written store for the
-  `runs` table (`run_id`, `thread_id`, `topic`, `status`, `created_at`, `cost_usd`, `report_md`).
-  Backend-selected exactly like the checkpointer: stdlib `sqlite3` on `atlas_runs.sqlite` in dev,
-  `psycopg` over `DATABASE_URL` in prod. **Deliberate tradeoffs:** the schema is bootstrapped with a
-  `CREATE TABLE IF NOT EXISTS` on construction (no Alembic — overkill for one append-mostly table),
-  and in dev the `runs` metadata lives in its own sqlite file beside the checkpoints.
-- **Run lifecycle** (`app/services/run_service.py::RunService`) — the orchestrator the API (F6) will
-  call. `start(topic)` creates the run row and drives the graph to the approval pause; `resume(run_id,
-  decision)` feeds the decision back with `Command(resume=...)`. Each call opens a *fresh* checkpointer
-  and graph (no long-lived connection) — which is exactly what makes resume survive a restart — and the
-  synchronous graph/saver work is offloaded via `asyncio.to_thread`. The run row tracks the lifecycle
-  `planning → awaiting_approval → researching → done` with `cost_usd`.
-
-### Run it
-
-```bash
-cd backend
-# .env in backend/ with a real OPENAI_API_KEY
-uv run python -m app.graph.demo \
-  "Compare vector database pricing for a seed-stage startup" --interactive --thread demo-f5
-# → prints the proposed plan and waits: y = approve, e = edit (keep first N sections).
-#   Press Ctrl-C AT THE PAUSE to kill the process, then rerun the SAME command:
-uv run python -m app.graph.demo \
-  "Compare vector database pricing for a seed-stage startup" --interactive --thread demo-f5
-# → re-attaches to thread demo-f5, reprints the persisted plan, and 'y' resumes to a
-#   finished report + total_cost_usd — proving checkpointer durability across processes.
-```
-
-Without `--interactive` the demo auto-approves at the pause so a run completes in one shot.
-
-### Verify
-
-```bash
-cd backend
-uv run pytest && uv run ruff check . && uv run mypy app
-# test_approval_restart.py proves resume survives a fresh graph over the same sqlite file;
-# test_approval_interrupt.py proves editing the plan changes the fan-out;
-# test_run_service.py proves the runs row transitions planning → awaiting_approval → done.
-```
-
-## F9 — Model routing & cost optimization
-
-Each graph role is routed to a cost-appropriate OpenAI model behind the unchanged
-`get_model(role)` seam (`app/llm/router.py`). The default `MODEL_ROUTING` sends
-planner/reviewer/writer to the strong tier (`openai:gpt-4o`) and the high-volume fan-out
-worker to the cheap tier (`openai:gpt-4o-mini`). `GET /api/runs/{id}` now returns a
-`cost_breakdown: {node: cost_usd}` derived from `usage_log`.
-
-Override routing via the `MODEL_ROUTING` env var (JSON; roles omitted fall back to
-`DEFAULT_MODEL`; unknown role keys are rejected at startup):
-
-```bash
-# force everything onto the strong model
-MODEL_ROUTING='{"planner":"openai:gpt-4o","reviewer":"openai:gpt-4o","writer":"openai:gpt-4o","worker":"openai:gpt-4o"}' \
-  uv run python -m app.graph.demo "Compare vector database pricing for a seed-stage startup"
-```
-
-The cost comparison across all-gpt-4o / routed / all-gpt-4o-mini (n=20, seed 42) and the
-chosen default live in `backend/evals/EXPERIMENTS.md`.
-
-### Verify
-
-```bash
-cd backend
-uv run pytest tests/test_router_routing.py tests/test_config_routing.py tests/test_cost_breakdown.py -q
-git diff --stat -- app/graph/nodes/   # empty: routing changed no node code
-# Full comparison (real OpenAI + Tavily calls, needs live keys) — see evals/EXPERIMENTS.md:
-uv run python evals/run_benchmark.py --n 20 --seed 42
-```
-
----
-
-## F10 — Frontend foundation: API layer, design system & New Run flow
-
-A production-feeling React shell: a typed API client + TanStack Query hooks, a reconnecting
-SSE hook feeding a Zustand store, a hand-built Tailwind UI kit, `react-router` v7 routing,
-and a working New Run flow that lands on `/runs/:id` in a live connection state.
-
-### Configuration
-
-- **`react-router@^7`** is a runtime dependency (declarative/library mode — import router
-  primitives from `react-router`, **not** `react-router-dom`). Fresh clones get it via
-  `npm install`; if adding to an older checkout run `npm i react-router@^7`.
-- **`VITE_API_URL`** (see `frontend/.env.example`) is the API base URL. Leave it **empty**
-  for local dev — same-origin requests hit the Vite dev proxy, which forwards `/api` →
-  `http://localhost:8000` (no CORS). In production (F13) set it to the API origin.
-
-### Run it
-
-```bash
-# terminal 1 — backend (dev, sqlite)
-cd backend && uv run uvicorn app.main:app --port 8000
-
-# terminal 2 — frontend
-cd frontend && npm install && npm run dev
-# → http://localhost:5173
-#   New Run: enter "Compare vector database pricing for a seed-stage startup",
-#   press ⌘/Ctrl+Enter → navigates to /runs/<id>; the Run page shows a status Badge
-#   and a connection indicator ("connecting…" → "live") while SSE events accumulate.
-# → http://localhost:5173/dev/kit — visual QA of every UI-kit variant (dev build only).
-# → stop & restart the backend while on /runs/<id> → "reconnecting…", then the hook
-#   replays the full run history without duplication (F6 replays its buffer per connect).
-```
-
-### Verify
-
-```bash
-cd frontend
-npm run test && npx tsc --noEmit && npm run lint
-# 18 vitest specs pass (envelope round-trip, SSE reconnect, keyboard nav, client,
-# New Run create flow, query invalidation); tsc + eslint clean.
-```
-
-## F11 — Frontend: live run view (node timeline, sections, cost meter)
-
-The screen that sells Atlas: `RunPage` renders the agent working in real time. A pure
-`deriveRunView(events, plan, drafts)` fold (`src/lib/runView.ts`) turns the SSE event log into
-one view model — so a run renders identically whether joined live or reconstructed from replay.
-On top of it: a `NodeTimeline` graph-stage stepper (Plan → Approval → Research → Review → Write)
-whose Research stage expands to per-section rows with `rev n/2` chips (the LangGraph cycle made
-visible), independently-updating `SectionCard`s, a `CostMeter` (monospace total, warn past
-`$1.20`, per-node hover breakdown), and a `ReportPane` that streams writer tokens then swaps to
-rendered markdown. `HistoryPage` lists past runs and links into the run view.
-
-### Configuration
-
-- **`VITE_LANGSMITH_BASE_URL`** (see `frontend/.env.example`) — the LangSmith project URL used to
-  deep-link a run's trace from the error banner: `${VITE_LANGSMITH_BASE_URL}/r/${trace_id}`,
-  where `trace_id` comes from `RunDetail` (captured server-side, see F2/observability). Leave it
-  empty to fall back to a static LangSmith link — the "View trace in LangSmith" link is never dead.
-
-### Run it
-
-```bash
-# backend + frontend as in F10; set VITE_LANGSMITH_BASE_URL in frontend/.env for deep-links.
-cd frontend && npm run dev   # → http://localhost:5173
-# Start a run and open /runs/<id>: plan stage completes → "waiting for approval" placeholder →
-# (approve via the API/F5 resume) → section rows advance independently → a section shows a
-# rev 1/2 chip with reviewer feedback → writer tokens stream → the pane renders the report.
-# → /dev/kit shows the F11 run components in the "Run components (F11)" section.
-```
-
-### Verify
-
-```bash
-cd frontend
-npm run test && npx tsc --noEmit && npm run lint
-# runView / langsmith / relativeTime helpers, NodeTimeline / SectionCard / CostMeter,
-# RunPage (late-join replay, disabled approval, trace deep-link + fallback), HistoryPage.
-```
-
-## F12 — Frontend: plan approval (HITL) & report viewer
-
-Closes the human-in-the-loop and delivers the final artifact. When a run is
-`awaiting_approval`, `RunPage` renders **`PlanApprovalPanel`** (`src/components/approval/`)
-in place of F11's placeholder: the proposed plan becomes editable cards — inline title,
-objective textarea, suggested-query chips (add on Enter / remove), up/down reorder (no
-drag-drop dependency), delete, and "Add section" capped at `MAX_SECTIONS = 6`. Approving
-resumes the run via `useResumeRun` — **Approve plan** (`{action:"approve"}`) when the plan is
-untouched, or, once edited, **Approve with edits** (`{action:"edit", plan}`, ids renumbered
-`s1..sN`) with a secondary "Discard edits & approve original" so edits are never silently
-lost. Edits actually change the run: a deleted section produces no worker. A `409` shows
-"already resumed" and refetches; the whole flow is keyboard-operable.
-
-On `done`, **`ReportViewer`** (`src/components/report/`) renders the report markdown
-(`react-markdown` + `remark-gfm`, `.prose-atlas` typography) with `[n]` citation markers as
-accent superscript links to a structured **`SourceList`** (favicon via Google s2, title, URL,
-tool-origin badge). Actions: copy markdown, download `.md` (F7 endpoint), open the LangSmith
-trace (reuses `VITE_LANGSMITH_BASE_URL`).
-
-### Backend delta
-
-`GET /api/runs/{id}` (`RunDetail`) now carries **`sources: Source[]`** — the writer's global
-deduped source list where index `i` corresponds to the report's `[i+1]` marker. It is derived
-on read via `report_sources()` (`app/graph/nodes/writer.py`, reusing `_select_drafts` +
-`merge_sections`), never stored in `ResearchState` — guaranteeing `sources[n-1]` ↔ `[n]`
-parity by construction, so the frontend links citations without reconstructing dedup.
-
-### Verify
-
-```bash
-cd backend && uv run pytest -q tests/test_run_detail_sources.py && uv run ruff check app tests && uv run mypy app
-cd ../frontend && npm run typecheck && npm run lint && npm run test
-# citations / SourceList / ReportViewer / PlanApprovalPanel (edit round-trip, 409, cap,
-# keyboard), RunPage (interactive approval panel, ReportViewer with clickable citations).
-```
-
-Live happy path: submit a topic → edit the plan (rename + delete a section) → **Approve with
-edits** → the timeline shows only the kept sections advancing → the report renders with
-clickable `[n]` citations → **Download .md** matches `curl .../report.md` byte-for-byte.
+| Feature | Spec |
+| --- | --- |
+| F1 Scaffolding, config, dev env | [`specs/F1-scaffolding.md`](specs/F1-scaffolding.md) |
+| F2 Graph state + planner skeleton | [`specs/F2-graph-skeleton.md`](specs/F2-graph-skeleton.md) |
+| F3 Tools + parallel worker fan-out | [`specs/F3-tools-worker-fanout.md`](specs/F3-tools-worker-fanout.md) |
+| F4 Reviewer + self-correction loop | [`specs/F4-reviewer-self-correction.md`](specs/F4-reviewer-self-correction.md) |
+| F5 Human-in-the-loop approval gate | [`specs/F5-hitl-approval.md`](specs/F5-hitl-approval.md) |
+| F6 API + SSE streaming | [`specs/F6-api-sse-streaming.md`](specs/F6-api-sse-streaming.md) |
+| F7 Report quality + download | [`specs/F7-report-quality.md`](specs/F7-report-quality.md) |
+| F8 Evaluation harness | [`specs/F8-evaluation-harness.md`](specs/F8-evaluation-harness.md) |
+| F9 Model routing + cost optimization | [`specs/F9-model-routing.md`](specs/F9-model-routing.md) |
+| F10 Frontend foundation + New Run | [`specs/F10-frontend-foundation.md`](specs/F10-frontend-foundation.md) |
+| F11 Live run view | [`specs/F11-frontend-live-run-view.md`](specs/F11-frontend-live-run-view.md) |
+| F12 Plan approval + report viewer | [`specs/F12-frontend-hitl-report-viewer.md`](specs/F12-frontend-hitl-report-viewer.md) |
+| F13 Deployment, CI, README | [`specs/F13-deployment.md`](specs/F13-deployment.md) |

@@ -1,6 +1,11 @@
-# Atlas — dev services.
-# F1: Postgres only. Backend/frontend containers arrive in F13.
-# The backend runs on the host in dev; this compose file just provides the DB.
+# Atlas — full production-shaped stack (F13).
+#
+# From a fresh clone:  cp .env.example .env  (fill OPENAI_API_KEY + TAVILY_API_KEY)
+#                      docker compose up --build   →  app on http://localhost
+#
+# Ordering: postgres (healthy) → backend → frontend. The backend runs a SINGLE
+# uvicorn worker on purpose (the SSE RunRegistry is in-process — see DEPLOYMENT.md);
+# do not scale it to >1 replica as-is.
 services:
   postgres:
     image: postgres:16
@@ -9,7 +14,7 @@ services:
       POSTGRES_PASSWORD: atlas
       POSTGRES_DB: atlas
     ports:
-      - "5432:5432"
+      - "5432:5432" # exposed for local debugging only; not required by the app
     volumes:
       - atlas_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +22,38 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    # Secrets + optional config come from the root .env (OPENAI_API_KEY,
+    # TAVILY_API_KEY, LANGSMITH_*, MODEL_ROUTING, EVAL_*, RAG_SERVICE_URL, ...).
+    env_file:
+      - .env
+    # Explicit values override anything in .env (compose precedence): pin the
+    # stack to Postgres, point at the postgres service, and set the browser origin.
+    environment:
+      CHECKPOINT_BACKEND: postgres
+      DATABASE_URL: postgresql://atlas:atlas@postgres:5432/atlas
+      CORS_ORIGINS: http://localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # No host port publish — only nginx reaches it over the compose network at
+    # backend:8000. Uncomment to hit the API directly while debugging.
+    # ports:
+    #   - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      # Optional: bake a LangSmith trace deep-link base into the bundle.
+      # args:
+      #   VITE_LANGSMITH_BASE_URL: ${VITE_LANGSMITH_BASE_URL:-}
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
 
 volumes:
   atlas_pgdata:
