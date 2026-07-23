@@ -4,6 +4,8 @@ import { cn } from './lib/cn'
 import { Button, EmptyState } from './components/ui'
 import { NewRunPage } from './pages/NewRunPage'
 import { RunPage } from './pages/RunPage'
+import { ReportPage } from './pages/ReportPage'
+import { SectionDraftPage } from './pages/SectionDraftPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { DevKitPage } from './pages/DevKitPage'
 
@@ -73,6 +75,8 @@ function App() {
       <Route element={<AppShell />}>
         <Route path="/" element={<NewRunPage />} />
         <Route path="/runs/:id" element={<RunPage />} />
+        <Route path="/runs/:id/report" element={<ReportPage />} />
+        <Route path="/runs/:id/sections/:sectionId" element={<SectionDraftPage />} />
         <Route path="/history" element={<HistoryPage />} />
         {import.meta.env.DEV && <Route path="/dev/kit" element={<DevKitPage />} />}
         <Route path="*" element={<NotFound />} />

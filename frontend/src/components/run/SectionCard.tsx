@@ -1,7 +1,7 @@
 // One card per plan section (F11). Live state pill + reviewer score/feedback + source count.
-// Draft content stays collapsed until the run is done (draft text is never streamed).
-import { useState } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+// The full draft opens on its own page once the run is done (draft text is never streamed).
+import { ChevronRight } from 'lucide-react'
+import { Link } from 'react-router'
 import { Badge, Card, Skeleton, type Tone } from '../ui'
 import { cn } from '../../lib/cn'
 import type { SectionState, SectionView } from '../../lib/runView'
@@ -11,6 +11,7 @@ const STATE_TONE: Record<SectionState, Tone> = {
   researching: 'accent',
   reviewing: 'accent',
   revising: 'warn',
+  unapproved: 'warn',
   approved: 'success',
   failed: 'danger',
 }
@@ -20,18 +21,19 @@ const STATE_LABEL: Record<SectionState, string> = {
   researching: 'Researching',
   reviewing: 'Reviewing',
   revising: 'Revising',
+  unapproved: 'Not approved',
   approved: 'Approved',
   failed: 'Failed',
 }
 
 export interface SectionCardProps {
   section: SectionView
-  /** Final draft markdown — only present (and revealable) once the run is done. */
+  runId: string
+  /** True once a final draft exists for this section (run done) — enables the draft link. */
   contentMd?: string
 }
 
-export function SectionCard({ section, contentMd }: SectionCardProps) {
-  const [open, setOpen] = useState(false)
+export function SectionCard({ section, runId, contentMd }: SectionCardProps) {
   const review = section.lastReview
   const canExpand = Boolean(contentMd)
 
@@ -86,20 +88,13 @@ export function SectionCard({ section, contentMd }: SectionCardProps) {
 
       {canExpand && (
         <div className="mt-3 border-t border-border pt-2">
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
+          <Link
+            to={`/runs/${runId}/sections/${section.id}`}
             className="flex items-center gap-1 text-xs text-text-secondary outline-none hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent"
-            aria-expanded={open}
           >
-            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            {open ? 'Hide draft' : 'Show draft'}
-          </button>
-          {open && (
-            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary">
-              {contentMd}
-            </pre>
-          )}
+            <ChevronRight size={14} />
+            Show draft
+          </Link>
         </div>
       )}
     </Card>

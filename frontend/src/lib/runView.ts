@@ -14,6 +14,7 @@ export type SectionState =
   | 'researching'
   | 'reviewing'
   | 'revising'
+  | 'unapproved'
   | 'approved'
   | 'failed'
 
@@ -209,6 +210,17 @@ export function deriveRunView(
   }
 
   const finished = status === 'done' || reportMd !== null
+
+  // On a finished (non-errored) run, a section still in a live 'revise' state never cleared
+  // the reviewer's bar within its revision budget — the writer published its best-available
+  // draft under ## Limitations. Relabel it 'unapproved' so the UI stops implying work is
+  // still in flight. The error path already forces 'failed' above.
+  if (finished && status !== 'failed') {
+    for (const s of sections) {
+      if (s.lastReview && s.lastReview.verdict === 'revise') s.state = 'unapproved'
+    }
+  }
+
   return {
     stages: computeStages(status, entered, finished),
     sections,

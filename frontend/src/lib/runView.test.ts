@@ -64,6 +64,29 @@ describe('deriveRunView — sections', () => {
     expect(twice.lastReview?.verdict).toBe('revise')
   })
 
+  it('relabels a still-revising section "unapproved" once the run is done', () => {
+    const view = deriveRunView(
+      [
+        finished('worker', 's1'),
+        review('s1', 'approved'),
+        finished('worker', 's2'),
+        review('s2', 'revise'),
+        { type: 'done', report_md: '# R' },
+      ],
+      PLAN,
+    )
+    expect(view.sections.find((s) => s.id === 's1')?.state).toBe('approved')
+    expect(view.sections.find((s) => s.id === 's2')?.state).toBe('unapproved')
+  })
+
+  it('keeps live sections in their in-progress state before the run finishes', () => {
+    const view = deriveRunView(
+      [finished('worker', 's2'), review('s2', 'revise')],
+      PLAN,
+    )
+    expect(view.sections.find((s) => s.id === 's2')?.state).toBe('revising')
+  })
+
   it('pulls source counts from hydrated drafts', () => {
     const view = deriveRunView([review('s1', 'approved')], PLAN, [
       {

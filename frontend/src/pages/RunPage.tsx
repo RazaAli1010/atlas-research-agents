@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { useParams } from 'react-router'
-import { AlertTriangle, ExternalLink } from 'lucide-react'
+import { Link, useParams } from 'react-router'
+import { AlertTriangle, ArrowRight, ExternalLink, FileText } from 'lucide-react'
 import { Badge, Card, Skeleton } from '../components/ui'
 import {
   ConnectionPill,
@@ -11,10 +11,10 @@ import {
   SectionCard,
 } from '../components/run'
 import { PlanApprovalPanel } from '../components/approval'
-import { ReportViewer } from '../components/report'
 import { useRun } from '../api/queries'
 import { useRunEvents } from '../api/useRunEvents'
 import { deriveRunView } from '../lib/runView'
+import { reportPreview } from '../lib/reportPreview'
 import { LANGSMITH_HOME, langsmithTraceUrl } from '../lib/langsmith'
 import type { RunStatus } from '../types'
 
@@ -46,9 +46,13 @@ export function RunPage() {
   const { data: detail } = useRun(id ?? '')
   const { events, interruptPayload, connectionState } = useRunEvents(id)
 
+  // Prefer whichever source actually holds sections. `detail.plan` is a *truthy* empty [] for
+  // an un-approved run (the plan lives only in the interrupt payload until it's approved), so
+  // `??` would wrongly stop at it — pick the first non-empty array instead.
+  const interruptPlan = interruptPayload?.plan
   const plan = useMemo(
-    () => detail?.plan ?? interruptPayload?.plan ?? [],
-    [detail?.plan, interruptPayload?.plan],
+    () => (interruptPlan?.length ? interruptPlan : (detail?.plan ?? [])),
+    [detail?.plan, interruptPlan],
   )
   const view = useMemo(
     () => deriveRunView(events, plan, detail?.drafts),
@@ -113,17 +117,18 @@ export function RunPage() {
 
         <main className="space-y-6">
           {status === 'awaiting_approval' && (
-            <PlanApprovalPanel
-              key={id}
-              runId={id ?? ''}
-              proposedPlan={interruptPayload?.plan ?? detail?.plan ?? []}
-            />
+            <PlanApprovalPanel key={id} runId={id ?? ''} proposedPlan={plan} />
           )}
 
           {view.sections.length > 0 ? (
             <div className="grid gap-4 sm:grid-cols-2">
               {view.sections.map((s) => (
-                <SectionCard key={s.id} section={s} contentMd={contentBySection.get(s.id)} />
+                <SectionCard
+                  key={s.id}
+                  section={s}
+                  runId={id ?? ''}
+                  contentMd={contentBySection.get(s.id)}
+                />
               ))}
             </div>
           ) : (
@@ -136,12 +141,30 @@ export function RunPage() {
           )}
 
           {reportMd !== null ? (
-            <ReportViewer
-              reportMd={reportMd}
-              sources={detail?.sources ?? []}
-              runId={id ?? ''}
-              traceId={detail?.trace_id ?? null}
-            />
+            <Card header="Report ready">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-control bg-accent/15 text-accent">
+                  <FileText size={18} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="line-clamp-3 text-sm text-text-secondary">
+                    {reportPreview(reportMd)}
+                  </p>
+                  <div className="mt-3 flex items-center gap-4">
+                    <Link
+                      to={`/runs/${id}/report`}
+                      className="inline-flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm font-medium text-background outline-none transition-colors hover:bg-accent/90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface focus-visible:ring-accent"
+                    >
+                      Open full report
+                      <ArrowRight size={14} />
+                    </Link>
+                    <span className="font-mono text-xs text-text-secondary">
+                      {(detail?.sources?.length ?? 0)} sources
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </Card>
           ) : (
             <Card header="Report">
               <ReportPane writerDraft={view.writerDraft} reportMd={null} />

@@ -75,8 +75,10 @@ describe('RunPage', () => {
       { type: 'done', report_md: '# Vector Database Pricing\n\nBody.' },
     ])
 
-    // Report rendered as markdown, sections reconstructed as approved, no skeletons left.
-    expect(await screen.findByRole('heading', { name: 'Vector Database Pricing' })).toBeInTheDocument()
+    // Report shown as a compact "ready" card linking to its own page; sections reconstructed
+    // as approved; no skeletons left. The full report lives on /runs/r1/report.
+    const open = await screen.findByRole('link', { name: /open full report/i })
+    expect(open).toHaveAttribute('href', '/runs/r1/report')
     expect(screen.getAllByText('Approved')).toHaveLength(2)
     await waitFor(() => expect(container.querySelector('.animate-pulse')).toBeNull())
   })
@@ -107,32 +109,25 @@ describe('RunPage', () => {
     expect(approve).toBeEnabled()
   })
 
-  it('renders the polished ReportViewer with clickable citations on done', async () => {
+  it('shows a report preview (not the full inline report) on done', async () => {
     vi.spyOn(api, 'getRun').mockResolvedValue(
       detail({
-        final_report_md: '# Vector Database Pricing\n\nPinecone leads [1].\n\n## Sources\n1. [Pinecone](https://pinecone.io)',
-        sources: [
-          { url: 'https://pinecone.io', title: 'Pinecone', snippet: 's', tool: 'web_search' },
-        ],
+        final_report_md: '# Vector Database Pricing\n\nPinecone leads the pack.',
       }),
     )
     renderRunPage()
     await screen.findByText('Compare vector DBs')
 
-    emit([
-      {
-        type: 'done',
-        report_md:
-          '# Vector Database Pricing\n\nPinecone leads [1].\n\n## Sources\n1. [Pinecone](https://pinecone.io)',
-      },
-    ])
+    emit([{ type: 'done', report_md: '# Vector Database Pricing\n\nPinecone leads the pack.' }])
 
-    // Citation [1] is an accent superscript link to the source list entry.
-    const citation = await screen.findByRole('link', { name: '1' })
-    expect(citation).toHaveAttribute('href', '#source-1')
-    expect(citation.closest('sup')).not.toBeNull()
-    // Structured source list rendered (not the raw markdown "## Sources" list).
-    expect(document.getElementById('source-1')).not.toBeNull()
+    // Preview teaser text is present, but the report H1 is NOT rendered inline (it lives on
+    // the dedicated report page). The card links there.
+    expect(await screen.findByText(/Pinecone leads the pack/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Vector Database Pricing' })).toBeNull()
+    expect(screen.getByRole('link', { name: /open full report/i })).toHaveAttribute(
+      'href',
+      '/runs/r1/report',
+    )
   })
 
   it('deep-links the LangSmith trace on error when trace_id is present', async () => {
