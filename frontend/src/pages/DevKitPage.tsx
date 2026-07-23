@@ -165,7 +165,7 @@ export function DevKitPage() {
           </Card>
           <div className="grid gap-4 sm:grid-cols-2">
             {SAMPLE_VIEW.sections.map((s) => (
-              <SectionCard key={s.id} section={s} />
+              <SectionCard key={s.id} section={s} runId="sample-run" />
             ))}
           </div>
         </div>

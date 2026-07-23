@@ -18,6 +18,7 @@ const SECTION_DOT: Record<SectionState, string> = {
   researching: 'bg-accent atlas-pulse',
   reviewing: 'bg-accent atlas-pulse',
   revising: 'bg-warn atlas-pulse',
+  unapproved: 'bg-warn',
   approved: 'bg-success',
   failed: 'bg-danger',
 }
@@ -27,6 +28,7 @@ const SECTION_STATE_LABEL: Record<SectionState, string> = {
   researching: 'Researching',
   reviewing: 'Reviewing',
   revising: 'Revising',
+  unapproved: 'Not approved',
   approved: 'Approved',
   failed: 'Failed',
 }
