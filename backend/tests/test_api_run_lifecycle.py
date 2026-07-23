@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services import run_service as run_service_mod
 from tests.api_helpers import build_app, client_for, patch_models, read_events, wait_for_status
 
 
@@ -18,6 +19,9 @@ async def test_full_lifecycle_streams_ordered_events(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     patch_models(monkeypatch)
+    # Force tracing off so trace_id is deterministically null regardless of the
+    # dev .env (real capture is covered in test_run_service). Keeps this test hermetic.
+    monkeypatch.setattr(run_service_mod.settings, "LANGSMITH_TRACING", False)
     app = build_app(tmp_path)
 
     async with client_for(app) as client:
@@ -64,6 +68,9 @@ async def test_full_lifecycle_streams_ordered_events(
         assert body["status"] == "done"
         assert body["final_report_md"].strip()
         assert len(body["usage_log"]) > 0
+        # trace_id is serialized (null here — tracing is off in tests).
+        assert "trace_id" in body
+        assert body["trace_id"] is None
 
         listing = await client.get("/api/runs")
         assert listing.status_code == 200

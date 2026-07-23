@@ -15,6 +15,9 @@ def test_defaults_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-x")
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
     monkeypatch.delenv("CHECKPOINT_BACKEND", raising=False)
+    # create_app() -> enable_langsmith() exports LANGSMITH_TRACING into the process
+    # env when the dev .env enables it; clear it so the default is tested in isolation.
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 

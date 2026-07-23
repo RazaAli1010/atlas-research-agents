@@ -94,6 +94,7 @@ export interface RunDetail {
   final_report_md: string
   usage_log: UsageEvent[]
   cost_breakdown: Record<string, number>
+  trace_id: string | null // LangSmith root run id for the deep-link (F11); null when untraced
 }
 export type ResumeAction =
   | { action: 'approve' }

@@ -20,7 +20,8 @@ from app.graph.nodes import writer as writer_mod
 from app.graph.nodes.planner import PlannerOutput
 from app.graph.state import Review, SectionPlan
 from app.persistence.runs_repo import RunsRepo
-from app.services.run_service import RunService
+from app.services import run_service as run_service_mod
+from app.services.run_service import RunService, _seed_state
 from tests.fakes import FakeModel, FakeReviewModel, ai
 
 _APPROVE = Review(section_id="x", verdict="approved", score=0.95, feedback="")
@@ -106,3 +107,52 @@ def test_resume_unknown_run_raises(
     service = _service(tmp_path)
     with pytest.raises(KeyError):
         asyncio.run(service.resume("missing", {"action": "approve"}))
+
+
+class _FakeRun:
+    id = "trace-xyz"
+
+
+class _FakeCollector:
+    traced_runs = [_FakeRun()]
+
+
+@contextmanager
+def _fake_collect_runs():
+    """Stand-in for langchain's collect_runs — yields a preset root run."""
+    yield _FakeCollector()
+
+
+def _stream_trace_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, tracing: bool
+) -> str | None:
+    """Drive stream_run once with a fake run collector; return the persisted trace_id."""
+    _patch(monkeypatch)
+    monkeypatch.setattr(run_service_mod, "collect_runs", _fake_collect_runs)
+    monkeypatch.setattr(run_service_mod.settings, "LANGSMITH_TRACING", tracing)
+    service = _service(tmp_path)
+    service._repo.create("r1", "t1", "Compare vector DBs")
+
+    events: list[object] = []
+
+    async def emit(ev: object) -> None:
+        events.append(ev)
+
+    asyncio.run(service.stream_run("r1", "t1", _seed_state("Compare vector DBs"), emit))
+    row = service._repo.get("r1")
+    assert row is not None
+    return row.trace_id
+
+
+def test_stream_run_captures_trace_id_when_tracing_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert _stream_trace_id(monkeypatch, tmp_path, tracing=True) == "trace-xyz"
+
+
+def test_stream_run_no_trace_id_when_tracing_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Collector still yields a run, but the gate keeps trace_id null so we never
+    # deep-link a trace that was never exported to LangSmith.
+    assert _stream_trace_id(monkeypatch, tmp_path, tracing=False) is None

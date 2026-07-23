@@ -25,6 +25,7 @@ from typing import Any
 from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tracers.context import collect_runs
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 from pydantic import BaseModel
@@ -36,6 +37,7 @@ from app.api.sse import (
     chunk_to_events,
     terminal_events,
 )
+from app.config import settings
 from app.graph.builder import build_graph
 from app.graph.state import ResearchState
 from app.persistence.checkpointer import checkpointer_cx as default_checkpointer_cx
@@ -156,16 +158,34 @@ class RunService:
             _DONE = object()
 
             def _pump() -> None:
-                """Run the sync graph in a worker thread, forwarding chunks to the loop."""
+                """Run the sync graph in a worker thread, forwarding chunks to the loop.
+
+                ``collect_runs`` is entered *inside* this worker thread — the same thread
+                that runs ``graph.stream`` — so the collector's contextvar is active where
+                the graph executes (``asyncio.to_thread`` copies the caller context, but
+                entering here avoids any ambiguity). Its ``traced_runs[0].id`` is the
+                LangSmith root run id, forwarded to the loop for the ``trace_id`` deep-link.
+                """
                 try:
                     with self._cx() as cp:
                         graph = build_graph(cp)
-                        for chunk in graph.stream(
-                            kickoff, config=config, stream_mode=["tasks", "messages"]
-                        ):
-                            loop.call_soon_threadsafe(bridge.put_nowait, ("chunk", chunk))
+                        with collect_runs() as run_cb:
+                            for chunk in graph.stream(
+                                kickoff, config=config, stream_mode=["tasks", "messages"]
+                            ):
+                                loop.call_soon_threadsafe(
+                                    bridge.put_nowait, ("chunk", chunk)
+                                )
                         snapshot = graph.get_state(config)
+                    # Store the id only when tracing is on, so we never deep-link a trace
+                    # that was never exported to LangSmith.
+                    trace_id = (
+                        str(run_cb.traced_runs[0].id)
+                        if settings.LANGSMITH_TRACING and run_cb.traced_runs
+                        else None
+                    )
                     loop.call_soon_threadsafe(bridge.put_nowait, ("snap", snapshot))
+                    loop.call_soon_threadsafe(bridge.put_nowait, ("trace", trace_id))
                 except Exception as exc:  # re-raised on the consuming side
                     loop.call_soon_threadsafe(bridge.put_nowait, ("error", exc))
                 finally:
@@ -173,6 +193,7 @@ class RunService:
 
             pump = asyncio.create_task(asyncio.to_thread(_pump))
             snap = None
+            trace_id: str | None = None
             pump_error: Exception | None = None
             while True:
                 item = await bridge.get()
@@ -185,6 +206,8 @@ class RunService:
                         await emit(event)
                 elif kind == "snap":
                     snap = data
+                elif kind == "trace":
+                    trace_id = data
                 elif kind == "error":
                     pump_error = data
             await pump
@@ -201,6 +224,7 @@ class RunService:
                 status=values["status"],
                 cost_usd=_total_cost(values),
                 report_md=values.get("final_report_md") or None,
+                trace_id=trace_id,
             )
         except Exception as exc:  # graph failure → surface to clients + mark failed
             await emit(ErrorEvent(message=str(exc)))
