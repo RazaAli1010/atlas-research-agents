@@ -282,6 +282,23 @@ def assemble_report(
     return "\n".join(parts).rstrip() + "\n"
 
 
+def report_sources(
+    plan: list[SectionPlan],
+    drafts: list[SectionDraft],
+    reviews: list[Review],
+) -> list[Source]:
+    """The report's global deduped source list; index ``i`` ↔ citation marker ``[i+1]``.
+
+    Reuses the writer's own selection + merge so the list is identical to the one
+    embedded in ``final_report_md`` (both derive from the same ``plan``/``drafts``/
+    ``reviews``). Used by the API layer to expose ``RunDetail.sources`` (F12) without
+    re-implementing dedup/numbering on the frontend.
+    """
+    chosen, _ = _select_drafts(plan, drafts, reviews)
+    _, sources, _ = merge_sections(plan, chosen)
+    return sources
+
+
 def writer(state: ResearchState) -> dict:
     """Assemble ``final_report_md`` from the selected per-section drafts.
 

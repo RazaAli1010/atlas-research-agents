@@ -31,6 +31,7 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
     usage_log: [],
     cost_breakdown: { planner: 0.05 },
     trace_id: null,
+    sources: [],
     ...overrides,
   }
 }
@@ -80,7 +81,7 @@ describe('RunPage', () => {
     await waitFor(() => expect(container.querySelector('.animate-pulse')).toBeNull())
   })
 
-  it('shows a disabled approval placeholder while awaiting approval', async () => {
+  it('renders the interactive approval panel while awaiting approval', async () => {
     vi.spyOn(api, 'getRun').mockResolvedValue(detail({ status: 'awaiting_approval' }))
     renderRunPage()
     await screen.findByText('Compare vector DBs')
@@ -90,13 +91,48 @@ describe('RunPage', () => {
       {
         type: 'interrupt',
         payload: {
-          plan: [{ id: 's1', title: 'Pricing tiers', objective: 'o', suggested_queries: [] }],
+          // Matches detail().plan — the planner writes both the run row and the interrupt.
+          plan: [
+            { id: 's1', title: 'Pricing tiers', objective: 'o', suggested_queries: [] },
+            { id: 's2', title: 'Scale limits', objective: 'o', suggested_queries: [] },
+          ],
         },
       },
     ])
 
+    // Editable inputs from the replayed interrupt plan, and an ENABLED approve button
+    // (F12 replaces F11's disabled placeholder).
+    expect(await screen.findByDisplayValue('Pricing tiers')).toBeInTheDocument()
     const approve = await screen.findByRole('button', { name: /approve plan/i })
-    expect(approve).toBeDisabled()
+    expect(approve).toBeEnabled()
+  })
+
+  it('renders the polished ReportViewer with clickable citations on done', async () => {
+    vi.spyOn(api, 'getRun').mockResolvedValue(
+      detail({
+        final_report_md: '# Vector Database Pricing\n\nPinecone leads [1].\n\n## Sources\n1. [Pinecone](https://pinecone.io)',
+        sources: [
+          { url: 'https://pinecone.io', title: 'Pinecone', snippet: 's', tool: 'web_search' },
+        ],
+      }),
+    )
+    renderRunPage()
+    await screen.findByText('Compare vector DBs')
+
+    emit([
+      {
+        type: 'done',
+        report_md:
+          '# Vector Database Pricing\n\nPinecone leads [1].\n\n## Sources\n1. [Pinecone](https://pinecone.io)',
+      },
+    ])
+
+    // Citation [1] is an accent superscript link to the source list entry.
+    const citation = await screen.findByRole('link', { name: '1' })
+    expect(citation).toHaveAttribute('href', '#source-1')
+    expect(citation.closest('sup')).not.toBeNull()
+    // Structured source list rendered (not the raw markdown "## Sources" list).
+    expect(document.getElementById('source-1')).not.toBeNull()
   })
 
   it('deep-links the LangSmith trace on error when trace_id is present', async () => {

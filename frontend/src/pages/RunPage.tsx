@@ -10,6 +10,8 @@ import {
   ReportPane,
   SectionCard,
 } from '../components/run'
+import { PlanApprovalPanel } from '../components/approval'
+import { ReportViewer } from '../components/report'
 import { useRun } from '../api/queries'
 import { useRunEvents } from '../api/useRunEvents'
 import { deriveRunView } from '../lib/runView'
@@ -36,28 +38,6 @@ function ErrorBanner({ message, traceId }: { message: string; traceId: string | 
         </a>
       </div>
     </div>
-  )
-}
-
-function ApprovalPlaceholder({ count }: { count: number }) {
-  return (
-    <Card>
-      <div className="flex items-center gap-2 text-sm text-warn">
-        <Badge tone="warn">Awaiting approval</Badge>
-      </div>
-      <p className="mt-3 text-sm text-text-secondary">
-        Atlas planned {count > 0 ? `${count} section${count === 1 ? '' : 's'}` : 'the run'} and is
-        paused for your review before any research runs.
-      </p>
-      {/* The interactive approve/edit UI ships in F12 — this is a disabled placeholder. */}
-      <button
-        type="button"
-        disabled
-        className="mt-4 cursor-not-allowed rounded-control border border-border px-3 py-1.5 text-sm text-text-secondary opacity-60"
-      >
-        Approve plan (coming in F12)
-      </button>
-    </Card>
   )
 }
 
@@ -133,7 +113,11 @@ export function RunPage() {
 
         <main className="space-y-6">
           {status === 'awaiting_approval' && (
-            <ApprovalPlaceholder count={interruptPayload?.plan.length ?? plan.length} />
+            <PlanApprovalPanel
+              key={id}
+              runId={id ?? ''}
+              proposedPlan={interruptPayload?.plan ?? detail?.plan ?? []}
+            />
           )}
 
           {view.sections.length > 0 ? (
@@ -151,9 +135,18 @@ export function RunPage() {
             )
           )}
 
-          <Card header="Report">
-            <ReportPane writerDraft={view.writerDraft} reportMd={reportMd} />
-          </Card>
+          {reportMd !== null ? (
+            <ReportViewer
+              reportMd={reportMd}
+              sources={detail?.sources ?? []}
+              runId={id ?? ''}
+              traceId={detail?.trace_id ?? null}
+            />
+          ) : (
+            <Card header="Report">
+              <ReportPane writerDraft={view.writerDraft} reportMd={null} />
+            </Card>
+          )}
         </main>
       </div>
     </div>
