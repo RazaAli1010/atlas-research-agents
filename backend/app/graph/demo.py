@@ -16,7 +16,6 @@ When ``LANGSMITH_TRACING`` is on, the run is traceable in the LangSmith ``atlas`
 project with named nodes.
 """
 
-import os
 import sys
 from typing import cast
 from uuid import uuid4
@@ -27,17 +26,13 @@ from langgraph.types import Command
 from app.config import settings
 from app.graph.builder import build_graph
 from app.graph.state import ResearchState
+from app.observability import enable_langsmith
 from app.persistence.checkpointer import checkpointer_cx
 
 
 def _enable_langsmith() -> None:
     """Export LangSmith env from settings so runs are traced (§2.9)."""
-    if not settings.LANGSMITH_TRACING:
-        return
-    os.environ["LANGSMITH_TRACING"] = "true"
-    os.environ["LANGSMITH_PROJECT"] = settings.LANGSMITH_PROJECT
-    if settings.LANGSMITH_API_KEY:
-        os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+    enable_langsmith(settings)
 
 
 def _seed_state(topic: str) -> ResearchState:

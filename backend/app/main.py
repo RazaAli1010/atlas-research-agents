@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_runs import RunRegistry
 from app.api.routes_runs import router as runs_router
 from app.config import settings
+from app.observability import enable_langsmith
 from app.persistence.runs_repo import RunsRepo
 from app.services.run_service import RunService
 
@@ -20,6 +21,9 @@ def create_app(
     run_service: RunService | None = None,
     registry: RunRegistry | None = None,
 ) -> FastAPI:
+    # Trace server-driven graph runs to LangSmith (§2.9); no-op when disabled.
+    enable_langsmith(settings)
+
     app = FastAPI(title="Atlas API")
 
     app.add_middleware(

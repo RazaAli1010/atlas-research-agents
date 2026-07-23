@@ -1,5 +1,6 @@
 """RunsRepo CRUD + idempotent bootstrap over a temp sqlite file."""
 
+import sqlite3
 from pathlib import Path
 
 from app.persistence.runs_repo import RunsRepo
@@ -63,3 +64,41 @@ def test_bootstrap_is_idempotent(tmp_path: Path) -> None:
     # A second repo over the same file must not error and must see the row.
     repo2 = RunsRepo(db_path=db)
     assert repo2.get("r1") is not None
+
+
+def test_trace_id_round_trip(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    repo.create("r1", "t1", "topic")
+    assert repo.get("r1").trace_id is None  # type: ignore[union-attr]
+
+    repo.update("r1", status="done", trace_id="trace-abc")
+    row = repo.get("r1")
+    assert row is not None
+    assert row.trace_id == "trace-abc"
+
+    # None means "leave unchanged" — a later untraced update must not null it.
+    repo.update("r1", status="done", trace_id=None)
+    assert repo.get("r1").trace_id == "trace-abc"  # type: ignore[union-attr]
+
+
+def test_migrates_pre_f11_db_without_trace_id_column(tmp_path: Path) -> None:
+    """A runs table created before F11 (no trace_id column) is migrated on open."""
+    db = str(tmp_path / "runs.sqlite")
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE runs (run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, "
+        "topic TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, "
+        "cost_usd REAL NOT NULL DEFAULT 0, report_md TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO runs VALUES ('old', 't', 'legacy', 'done', '2026-01-01T00:00:00', 0.1, '# R')"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = RunsRepo(db_path=db)  # __init__ runs the ALTER TABLE migration
+    row = repo.get("old")
+    assert row is not None
+    assert row.trace_id is None  # migrated column defaults to NULL
+    repo.update("old", status="done", trace_id="trace-new")
+    assert repo.get("old").trace_id == "trace-new"  # type: ignore[union-attr]

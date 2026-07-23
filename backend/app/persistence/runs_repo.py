@@ -36,11 +36,21 @@ CREATE TABLE IF NOT EXISTS runs (
     status     TEXT NOT NULL,
     created_at TEXT NOT NULL,
     cost_usd   REAL NOT NULL DEFAULT 0,
-    report_md  TEXT
+    report_md  TEXT,
+    trace_id   TEXT
 )
 """
 
-_COLUMNS = ("run_id", "thread_id", "topic", "status", "created_at", "cost_usd", "report_md")
+_COLUMNS = (
+    "run_id",
+    "thread_id",
+    "topic",
+    "status",
+    "created_at",
+    "cost_usd",
+    "report_md",
+    "trace_id",
+)
 
 
 class RunRow(BaseModel):
@@ -53,6 +63,7 @@ class RunRow(BaseModel):
     created_at: str
     cost_usd: float
     report_md: str | None
+    trace_id: str | None = None
 
 
 class RunsRepo:
@@ -63,6 +74,23 @@ class RunsRepo:
         self._use_sqlite = db_path is not None or settings.CHECKPOINT_BACKEND == "sqlite"
         self._db_path = db_path or RUNS_SQLITE_PATH
         self._execute(_CREATE_TABLE, commit=True)
+        self._ensure_trace_id_column()
+
+    def _ensure_trace_id_column(self) -> None:
+        """Add the ``trace_id`` column to a pre-F11 ``runs`` table (idempotent).
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an already-created table, so a DB
+        made before F11 lacks ``trace_id``. sqlite has no ``ADD COLUMN IF NOT EXISTS``,
+        so we probe ``PRAGMA table_info``; postgres supports the guarded form directly.
+        """
+        if self._use_sqlite:
+            cols = {r[1] for r in self._execute("PRAGMA table_info(runs)")}
+            if "trace_id" not in cols:
+                self._execute("ALTER TABLE runs ADD COLUMN trace_id TEXT", commit=True)
+        else:
+            self._execute(
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS trace_id TEXT", commit=True
+            )
 
     # --- connection / placeholder handling -------------------------------------
 
@@ -104,8 +132,8 @@ class RunsRepo:
         p = self._ph()
         self._execute(
             f"INSERT INTO runs (run_id, thread_id, topic, status, created_at, cost_usd, "
-            f"report_md) VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})",
-            (run_id, thread_id, topic, "planning", created_at, 0.0, None),
+            f"report_md, trace_id) VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})",
+            (run_id, thread_id, topic, "planning", created_at, 0.0, None, None),
             commit=True,
         )
         return RunRow(
@@ -116,6 +144,7 @@ class RunsRepo:
             created_at=created_at,
             cost_usd=0.0,
             report_md=None,
+            trace_id=None,
         )
 
     def update(
@@ -125,11 +154,13 @@ class RunsRepo:
         status: str,
         cost_usd: float | None = None,
         report_md: str | None = None,
+        trace_id: str | None = None,
     ) -> None:
-        """Patch ``status`` and, when provided, ``cost_usd`` / ``report_md``.
+        """Patch ``status`` and, when provided, ``cost_usd`` / ``report_md`` / ``trace_id``.
 
-        ``None`` for ``cost_usd``/``report_md`` means "leave unchanged", so a resume
-        that hasn't produced a report yet never clobbers an existing one.
+        ``None`` for ``cost_usd``/``report_md``/``trace_id`` means "leave unchanged", so
+        a resume that hasn't produced a report yet never clobbers an existing one, and a
+        run streamed with tracing off never nulls a previously-captured ``trace_id``.
         """
         p = self._ph()
         sets = [f"status = {p}"]
@@ -140,6 +171,9 @@ class RunsRepo:
         if report_md is not None:
             sets.append(f"report_md = {p}")
             params.append(report_md)
+        if trace_id is not None:
+            sets.append(f"trace_id = {p}")
+            params.append(trace_id)
         params.append(run_id)
         self._execute(
             f"UPDATE runs SET {', '.join(sets)} WHERE run_id = {p}",

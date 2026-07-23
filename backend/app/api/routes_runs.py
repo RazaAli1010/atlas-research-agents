@@ -142,6 +142,7 @@ class RunDetail(BaseModel):
     final_report_md: str
     usage_log: list[UsageEvent]
     cost_breakdown: dict[str, float]  # node -> summed cost_usd (derived from usage_log)
+    trace_id: str | None = None  # LangSmith root run id for the deep-link (F11); null when untraced
 
     @classmethod
     def from_row_and_state(cls, row: RunRow, values: dict[str, Any]) -> RunDetail:
@@ -163,6 +164,7 @@ class RunDetail(BaseModel):
             final_report_md=values.get("final_report_md") or "",
             usage_log=values.get("usage_log") or [],
             cost_breakdown=breakdown,
+            trace_id=row.trace_id,
         )
 
 

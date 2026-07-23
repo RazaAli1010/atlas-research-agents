@@ -81,7 +81,10 @@ uv run python -m app.graph.demo "Compare vector database pricing for a startup"
 ```
 
 Set `LANGSMITH_TRACING=true` (+ a valid `LANGSMITH_API_KEY`) to see the run in the LangSmith
-`atlas` project with named `planner` / `writer` nodes.
+`atlas` project with named `planner` / `writer` nodes. The FastAPI server enables tracing
+the same way (via `enable_langsmith` in `create_app`); when tracing is on, each run's
+LangSmith root run id is captured (`collect_runs`) and surfaced as `RunDetail.trace_id`, which
+the frontend (F11) turns into a "View trace in LangSmith" deep-link.
 
 ### Verify
 
