@@ -54,6 +54,38 @@ describe('PlanApprovalPanel', () => {
     })
   })
 
+  it('renders and enables approve when the plan arrives after mount (interrupt lag)', async () => {
+    // Regression: the panel mounts on status=awaiting_approval, before the interrupt SSE
+    // payload lands, so it first receives an empty plan. It must re-seed when the real plan
+    // arrives — otherwise the plan is invisible and submit stays disabled.
+    const resume = vi.spyOn(api, 'resumeRun').mockResolvedValue(undefined)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <PlanApprovalPanel runId="r1" proposedPlan={[]} />
+      </QueryClientProvider>,
+    )
+
+    // Empty plan: no section rows, and the single approve control is disabled.
+    expect(screen.queryByLabelText('Section 1 title')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled()
+
+    rerender(
+      <QueryClientProvider client={qc}>
+        <PlanApprovalPanel runId="r1" proposedPlan={plan(3)} />
+      </QueryClientProvider>,
+    )
+
+    // Plan now visible and approvable.
+    expect(await screen.findByLabelText('Section 1 title')).toHaveValue('Section 1')
+    expect(screen.getByLabelText('Section 3 title')).toBeInTheDocument()
+    const approve = screen.getByRole('button', { name: 'Approve plan' })
+    expect(approve).toBeEnabled()
+    await user.click(approve)
+    await waitFor(() => expect(resume).toHaveBeenCalledWith('r1', { action: 'approve' }))
+  })
+
   it('approves unedited with an approve payload (no plan)', async () => {
     const resume = vi.spyOn(api, 'resumeRun').mockResolvedValue(undefined)
     const { user } = renderPanel(plan(2))

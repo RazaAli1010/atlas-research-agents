@@ -23,7 +23,6 @@ from typing import Any, cast
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.graph.state import (
-    MAX_REVISIONS_PER_SECTION,
     ResearchState,
     Review,
     SectionDraft,
@@ -74,9 +73,9 @@ def _select_drafts(
     draft with an ``approved`` paired review; else the draft whose paired review has
     the highest score; else (no reviews) the highest-revision draft.
 
-    A section is *budget-exhausted-unapproved* when its latest review verdict is
-    ``revise`` and it has already produced ``MAX_REVISIONS_PER_SECTION`` revisions
-    (highest draft revision) — these get the Limitations note.
+    A section is *unapproved* when no review ever approved it and its latest verdict is
+    ``revise`` — whether it exhausted its revision budget or was stopped early by the
+    routing stall-gate. These get the Limitations note.
     """
     drafts_by_section: dict[str, list[SectionDraft]] = {}
     for draft in drafts:
@@ -110,15 +109,12 @@ def _select_drafts(
             pick = sec_drafts[-1]  # highest revision, ungraded
         chosen.append(pick)
 
-        # A limitation only when we are publishing a non-approved draft: no review
-        # ever approved the section, its latest verdict is still revise, and it has
-        # spent its full revision budget.
-        if (
-            not approved_idx
-            and sec_reviews
-            and sec_reviews[-1].verdict == "revise"
-            and sec_drafts[-1].revision >= MAX_REVISIONS_PER_SECTION
-        ):
+        # A limitation whenever we publish a non-approved draft: no review ever approved
+        # the section and its latest verdict is still revise. This covers both budget
+        # exhaustion (rev == MAX) and the routing stall-gate, which drops a section at
+        # rev 1 when a revision failed to improve its score — those were previously
+        # published silently, with no disclosure. The frontend labels these "Not approved".
+        if not approved_idx and sec_reviews and sec_reviews[-1].verdict == "revise":
             exhausted.add(section.id)
 
     return chosen, exhausted
@@ -229,8 +225,8 @@ def _build_limitations(
     if exhausted:
         titles = ", ".join(s.title for s in plan if s.id in exhausted)
         sentences.append(
-            "The following sections did not reach the reviewer's quality bar within "
-            f"the revision budget: {titles}. Their best available drafts are included."
+            "The following sections did not reach the reviewer's quality bar: "
+            f"{titles}. Their best available drafts are included."
         )
     if stripped > 0:
         sentences.append(

@@ -2,7 +2,7 @@
 // as editable cards and resumes the interrupted run with approve / edit. Edits actually
 // change the run — a deleted section produces no worker downstream (fan_out keys workers by
 // SectionPlan.id, so we renumber ids on submit).
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Plus, Trash2, X } from 'lucide-react'
 import type { ResumeAction, SectionPlan } from '../../types'
@@ -171,6 +171,21 @@ export function PlanApprovalPanel({ runId, proposedPlan }: PlanApprovalPanelProp
   const [error, setError] = useState<string | null>(null)
   const resume = useResumeRun(runId)
   const qc = useQueryClient()
+
+  // The proposed plan arrives via the `interrupt` SSE payload, which can land *after* this
+  // panel mounts (status flips to awaiting_approval first). A one-shot useState initializer
+  // would capture an empty plan and never recover, leaving the plan invisible and the submit
+  // button stuck disabled. Re-seed `sections` from `proposedPlan` while the panel is still
+  // pristine — i.e. the user hasn't edited away from the plan we last seeded. Once they type,
+  // `sections` diverges from the last seed and we stop overwriting their edits.
+  const seededRef = useRef<SectionPlan[]>(proposedPlan)
+  useEffect(() => {
+    const pristine = sections.length === 0 || sameShape(sections, seededRef.current)
+    if (pristine && !sameShape(sections, proposedPlan)) {
+      setSections(proposedPlan.map(clone))
+    }
+    seededRef.current = proposedPlan
+  }, [proposedPlan, sections])
 
   const pending = resume.isPending
   const dirty = !sameShape(sections, proposedPlan)

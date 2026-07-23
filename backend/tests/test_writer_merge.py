@@ -133,3 +133,25 @@ def test_writer_adds_limitations_note(monkeypatch: pytest.MonkeyPatch) -> None:
         < body.index("## Limitations")
         < body.index("## Sources")
     )
+
+
+def test_writer_discloses_stall_gated_section(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A section stopped early by the routing stall-gate (dropped at rev 1, still `revise`,
+    below the full revision budget) must still be disclosed in Limitations, not published
+    silently."""
+    _patch_writer_model(monkeypatch)
+    plan = [SectionPlan(id="s1", title="Pricing", objective="o", suggested_queries=["q"])]
+    drafts = [
+        SectionDraft(section_id="s1", content_md="rev0 body", sources=[], revision=0),
+        SectionDraft(section_id="s1", content_md="rev1 body", sources=[], revision=1),
+    ]
+    # Score stalled (0.40 -> 0.41), so routing stops before spending the last revision.
+    reviews = [_review("s1", "revise", 0.40), _review("s1", "revise", 0.41)]
+
+    out = writer(_state(plan, drafts, reviews, {"s1": 1}))  # type: ignore[arg-type]
+
+    body = out["final_report_md"]
+    assert "rev1 body" in body  # best-available draft is still published
+    assert "## Limitations" in body
+    assert "Pricing" in body
+    assert "None." not in body.split("## Limitations", 1)[1].split("## Sources", 1)[0]
